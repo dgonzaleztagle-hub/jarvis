@@ -1,0 +1,14 @@
+node_modules/
+local_data/
+.env
+.env.*
+*.log
+.DS_Store
+Thumbs.db
+
+# Local credentials and generated artifacts
+*.enc
+.local-key
+credentials.json
+tokens.json
+.google-tokens.json

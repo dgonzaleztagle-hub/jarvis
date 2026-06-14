@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>J.A.R.V.I.S.</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;800;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/public/styles.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+
+  <!-- STARTUP OVERLAY -->
+  <div class="startup-overlay" id="startupOverlay">
+    <div class="startup-card">
+      <div class="startup-reactor" id="startupBtn" title="Inicializar J.A.R.V.I.S.">
+        <div class="sr-ring sr-r1"></div>
+        <div class="sr-ring sr-r2"></div>
+        <div class="sr-ring sr-r3"></div>
+        <div class="sr-core"></div>
+      </div>
+      <p class="startup-label">INICIALIZAR J.A.R.V.I.S.</p>
+      <p class="startup-sub">PROTOCOLO DE ARRANQUE</p>
+    </div>
+  </div>
+
+  <!-- HUD PRINCIPAL -->
+  <div class="hud" id="hud">
+
+    <!-- HEADER -->
+    <header class="hud-header">
+      <div class="hdr-brand">
+        <span class="brand-name">J.A.R.V.I.S.</span>
+        <span class="brand-sub">OS v2.0</span>
+      </div>
+      <div class="hdr-status">
+        <span class="status-dot" id="statusDot"></span>
+        <span class="status-text" id="statusText">INICIALIZANDO</span>
+      </div>
+      <div class="hdr-meta">
+        <span class="hdr-clock" id="hudClock">00:00:00</span>
+        <div class="hdr-pills">
+          <span class="pill" id="modelPill">MODEL</span>
+          <span class="pill" id="telegramPill">TG</span>
+          <span class="pill" id="eventsPill">EVT</span>
+        </div>
+        <button class="icon-btn" id="settingsBtn" title="Configuración">⚙</button>
+      </div>
+    </header>
+
+    <!-- BODY: workspace | center | activity -->
+    <div class="hud-body" id="hudBody">
+
+      <!-- WORKSPACE PANEL (izquierda, slide in) -->
+      <aside class="side-panel workspace-panel" id="workspacePanel">
+        <div class="panel-bar">
+          <span class="panel-title" id="workspaceTitle">WORKSPACE</span>
+          <div style="display:flex;gap:4px">
+            <button class="icon-btn close-btn" id="reloadWorkspace" title="Recargar">↻</button>
+            <button class="icon-btn close-btn" id="closeWorkspace">✕</button>
+          </div>
+        </div>
+        <div class="panel-scroll" id="workspaceContent"></div>
+      </aside>
+
+      <!-- CENTRO: reactor + feed + comando -->
+      <div class="center-col">
+
+        <!-- Arc Reactor -->
+        <div class="reactor-zone">
+          <div class="reactor" id="reactor">
+            <canvas class="vader-canvas" id="vaderCanvas"></canvas>
+            <div class="r-ring r1"></div>
+            <div class="r-ring r2"></div>
+            <div class="r-ring r3"></div>
+            <div class="r-core" id="reactorCore">
+              <div class="r-inner-glow"></div>
+            </div>
+          </div>
+          <div class="reactor-status" id="reactorStatus">EN ESPERA</div>
+        </div>
+
+        <!-- Feed de mensajes -->
+        <div class="feed" id="feed">
+          <div class="feed-empty" id="feedEmpty">
+            <span>LISTO PARA RECIBIR COMANDOS</span>
+          </div>
+        </div>
+
+        <!-- Barra de voz/transcript -->
+        <div class="voice-bar" id="voiceBar" hidden>
+          <span class="voice-bar-icon" id="voiceBarIcon">🎙</span>
+          <span class="voice-bar-text" id="voiceBarText">En espera de voz</span>
+        </div>
+
+        <!-- Barra de comando -->
+        <div class="cmd-bar">
+          <div class="cmd-voice-group">
+            <button class="cmd-btn" id="voiceToggle" title="Activar/desactivar voz">VOZ</button>
+            <button class="cmd-btn" id="micToggle" title="Hablar">MIC</button>
+            <button class="cmd-btn" id="handsFreeToggle" title="Escucha continua">LIBRE</button>
+          </div>
+          <input class="cmd-input" id="chatInput" type="text"
+                 placeholder="Envía un comando a Jarvis..." autocomplete="off">
+          <button class="cmd-send" id="sendBtn">ENVIAR</button>
+        </div>
+
+      </div>
+
+      <!-- ACTIVITY PANEL (derecha, slide in) -->
+      <aside class="side-panel activity-panel" id="activityPanel">
+        <div class="panel-bar">
+          <span class="panel-title">ACTIVIDAD</span>
+          <button class="icon-btn close-btn" id="closeActivity">✕</button>
+        </div>
+        <div class="panel-scroll">
+          <div class="activity-section">
+            <div class="activity-section-title">TAREAS</div>
+            <div id="tasksList" class="activity-list"></div>
+          </div>
+          <div class="activity-section">
+            <div class="activity-section-title">EVENTOS</div>
+            <div id="eventsList" class="activity-list compact"></div>
+          </div>
+        </div>
+      </aside>
+
+    </div>
+
+    <!-- DOCK -->
+    <nav class="hud-dock">
+      <button class="dock-btn" id="dockAgenda" data-artifact="workspace">
+        <span class="dock-icon">📅</span>
+        <span class="dock-label">AGENDA</span>
+      </button>
+      <button class="dock-btn" id="dockEmails" data-artifact="workspace">
+        <span class="dock-icon">✉</span>
+        <span class="dock-label">CORREOS</span>
+        <span class="dock-badge hidden" id="emailsBadge">0</span>
+      </button>
+      <button class="dock-btn" id="dockActivity" data-panel="activity">
+        <span class="dock-icon">⚡</span>
+        <span class="dock-label">ACTIVIDAD</span>
+        <span class="dock-badge hidden" id="activityBadge">0</span>
+      </button>
+      <button class="dock-btn" id="dockMemoria" data-artifact="workspace">
+        <span class="dock-icon">🧠</span>
+        <span class="dock-label">MEMORIA</span>
+      </button>
+      <button class="dock-btn" id="dockPermisos" data-artifact="workspace">
+        <span class="dock-icon">🔐</span>
+        <span class="dock-label">PERMISOS</span>
+        <span class="dock-badge hidden" id="permisosBadge">0</span>
+      </button>
+      <button class="dock-btn" id="dockVoz" data-panel="settings">
+        <span class="dock-icon">🎙</span>
+        <span class="dock-label">VOZ</span>
+      </button>
+    </nav>
+
+  </div><!-- /hud -->
+
+  <!-- MODAL: CONFIGURACIÓN -->
+  <div class="modal-overlay" id="settingsModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-tabs">
+          <button class="modal-tab active" id="tabSistema" data-tab="sistema">SISTEMA</button>
+          <button class="modal-tab" id="tabVoz" data-tab="voz">VOZ</button>
+        </div>
+        <button class="icon-btn" id="closeSettings">✕</button>
+      </div>
+      <div class="modal-body">
+
+        <!-- Sistema / Google -->
+        <div class="config-section tab-panel" id="panelSistema">
+          <div class="config-section-title">CONEXIÓN GOOGLE</div>
+          <div class="google-status-row" id="googleStatusRow">
+            <span class="google-status-dot" id="googleDot"></span>
+            <span class="google-status-label" id="googleLabel">Verificando...</span>
+            <span class="google-status-source" id="googleSource"></span>
+          </div>
+          <div class="config-actions" style="margin-top:12px">
+            <a class="cmd-send" id="googleConnectBtn" href="/auth/google" target="_blank"
+               style="text-decoration:none;display:flex;align-items:center;justify-content:center;flex:1">
+              CONECTAR GOOGLE
+            </a>
+            <button class="cmd-btn" id="googleRefreshBtn">↻ VERIFICAR</button>
+          </div>
+          <p style="font-size:11px;color:var(--text-dim);margin-top:8px;line-height:1.5">
+            Al conectar, se abrirá Google en el navegador. Después de autorizar,
+            cierra esa ventana y presiona ↻ VERIFICAR.
+          </p>
+        </div>
+
+        <!-- Modo Confianza -->
+        <div class="config-section tab-panel" id="panelSistema2" style="display:contents">
+          <div class="config-section-title" style="margin-top:16px">PERMISOS</div>
+          <label class="config-field vader-toggle-row" id="trustModeRow">
+            <span>Modo Confianza <small>(no pide confirmación en acciones de riesgo alto)</small></span>
+            <input type="checkbox" id="trustModeToggle">
+          </label>
+          <p style="font-size:11px;color:var(--text-dim);margin-top:4px;line-height:1.5">
+            Con Modo Confianza activo, Jarvis ejecuta acciones como enviar correos o crear eventos sin pedir aprobación previa. Solo las acciones críticas siguen requiriendo confirmación.
+          </p>
+        </div>
+
+        <!-- Voz -->
+        <div class="config-section tab-panel hidden" id="panelVoz">
+          <div class="config-section-title">PERFIL DE VOZ</div>
+          <label class="config-field vader-toggle-row">
+            <span>Efecto Vader <small>(pitch bajo + reverb)</small></span>
+            <input type="checkbox" id="vaderEffectToggle">
+          </label>
+          <label class="config-field">
+            <span>Perfil</span>
+            <select id="voiceProfilePanel"></select>
+          </label>
+          <label class="config-field">
+            <span>Velocidad <small id="voiceRateValue">-12%</small></span>
+            <input id="voiceRateRange" type="range" min="-40" max="20" step="2" value="-12">
+          </label>
+          <label class="config-field">
+            <span>Volumen <small id="voiceVolumeValue">+8%</small></span>
+            <input id="voiceVolumeRange" type="range" min="-20" max="30" step="2" value="8">
+          </label>
+          <label class="config-field">
+            <span>Tono <small id="voicePitchValue">-18Hz</small></span>
+            <input id="voicePitchRange" type="range" min="-30" max="10" step="2" value="-18">
+          </label>
+          <div class="config-field">
+            <span>Frase de prueba</span>
+            <input id="voicePreviewText" type="text"
+                   value="Señor, Jarvis está en línea y listo para servir.">
+          </div>
+          <div class="config-presets">
+            <button id="voicePresetGreeting" class="cmd-btn">Saludo</button>
+            <button id="voicePresetCommand" class="cmd-btn">Comando</button>
+            <button id="voicePresetCount" class="cmd-btn">Conteo</button>
+          </div>
+          <div class="config-actions">
+            <button id="voicePreviewButton" class="cmd-btn">PROBAR VOZ</button>
+            <button id="voiceSaveButton" class="cmd-send">GUARDAR</button>
+          </div>
+          <div class="config-status" id="voiceSaveStatus">
+            Ajusta la voz y guarda cuando te convenza.
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: ARTEFACTO (redactar correo, detalle, etc.) -->
+  <div class="modal-overlay" id="artifactModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <span class="modal-title" id="artifactModalTitle"></span>
+        <button class="icon-btn" id="closeArtifactModal">✕</button>
+      </div>
+      <div class="modal-body" id="artifactModalBody"></div>
+    </div>
+  </div>
+
+  <script type="module" src="/public/app.js"></script>
+  <script type="module" src="/public/vader3d.js"></script>
+</body>
+</html>

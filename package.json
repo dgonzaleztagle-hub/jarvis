@@ -1,0 +1,33 @@
+{
+  "name": "jarvis-codex",
+  "version": "0.1.0",
+  "description": "Local-first Jarvis Codex runtime",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js --ignore 'local_data/' --ignore 'public/'",
+    "test": "node --test"
+  },
+  "keywords": [
+    "jarvis",
+    "local-first",
+    "assistant"
+  ],
+  "author": "",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@whiskeysockets/baileys": "^7.0.0-rc13",
+    "edge-tts-universal": "^1.4.0",
+    "ffmpeg-static": "^5.3.0",
+    "googleapis": "^173.0.0",
+    "jimp": "^1.6.1",
+    "jsqr": "^1.4.0",
+    "qrcode": "^1.5.4",
+    "yt-search": "^2.13.1",
+    "zxing-wasm": "^3.1.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  }
+}
