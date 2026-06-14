@@ -434,21 +434,51 @@ function createRuntime(options = {}) {
 
   toolRegistry.register({
     name: 'preview.render_html',
-    description: 'Renderizar una página HTML (landing, maqueta, sitio, cualquier documento web) en el HUD del usuario: aparece en un panel de vista previa con opción de abrirla en grande en el navegador. Úsalo cuando GENERES HTML que el usuario deba VER. Input: { html: "documento HTML completo (con sus estilos inline o <style>)", title: "nombre legible opcional" }.',
+    description: 'Crear y mostrar una página (landing, maqueta, sitio, cualquier documento web) en el HUD del usuario: aparece renderizada en un panel con opción de abrirla en grande. Úsalo cuando el usuario pida una página/landing/web. NO escribas tú el HTML completo: pasa un BRIEF corto en lenguaje natural y la herramienta genera el HTML por dentro. Input: { brief: "qué página crear, para quién, secciones y tono (ej: landing para Rishtedar, restaurante indio en Santiago: hero, platos destacados, botón de reserva, estética cálida)", title: "nombre legible opcional" }.',
     risk: 'low',
     permissions: [],
     execute: async (input) => {
       const fs = require('fs');
       const path = require('path');
-      const html = String(input.html || '');
-      if (!html.trim()) return { ok: false, error: 'HTML_REQUIRED' };
+      let html = String(input.html || '');
+      const brief = String(input.brief || '').trim();
+
+      // El HTML largo NO viaja en el toolCall (no cabe en el presupuesto de la
+      // decisión): se genera acá, con techo amplio, usando el MODELO ACTIVO.
+      // Así la calidad de la landing depende del modelo (Gemini free vs Sonnet)
+      // — justo lo que el flujo de escala de modelos quiere poder comparar.
+      if (!html.trim() && brief) {
+        const genPrompt = `Genera un documento HTML COMPLETO y autocontenido para: ${brief}.\nRequisitos: un único archivo, todo el CSS dentro de <style>, responsive, estética limpia y moderna, contenido realista (no "lorem ipsum"). Sin dependencias externas ni <script>. Devuelve SOLO el HTML empezando por <!doctype html>, sin markdown ni explicación.`;
+        try {
+          if (typeof modelProvider.generateText === 'function') {
+            const out = await modelProvider.generateText({
+              system: 'Eres un diseñador web. Devuelves únicamente HTML+CSS, sin explicaciones ni markdown.',
+              messages: [{ role: 'user', parts: [{ text: genPrompt }] }],
+              temperature: 0.5, maxTokens: 6000, purpose: 'preview_html'
+            });
+            html = String(out.text || '');
+          } else {
+            const out = await modelProvider.generateJson({
+              system: 'Devuelve únicamente JSON { "html": "<documento completo>" }. Sin markdown.',
+              messages: [{ role: 'user', parts: [{ text: `${genPrompt}\nDevuélvelo como {"html": "..."}.` }] }],
+              temperature: 0.5, maxTokens: 6000, purpose: 'preview_html'
+            });
+            html = String(out.data?.html || '');
+          }
+          html = html.replace(/^```(?:html)?\s*/i, '').replace(/```\s*$/i, '').trim();
+        } catch (err) {
+          return { ok: false, error: `PREVIEW_GENERATION_FAILED: ${err.message}` };
+        }
+      }
+
+      if (!html.trim()) return { ok: false, error: 'BRIEF_OR_HTML_REQUIRED' };
       const previewsDir = path.join(dataDir, 'previews');
       fs.mkdirSync(previewsDir, { recursive: true });
       const fileName = `preview_${Date.now()}_${Math.random().toString(16).slice(2, 8)}.html`;
       fs.writeFileSync(path.join(previewsDir, fileName), html, 'utf-8');
       const payload = { url: `/preview/${fileName}`, title: String(input.title || 'Vista previa') };
       eventBus.emit('hud_show_preview', payload);
-      return { ok: true, ...payload };
+      return { ok: true, ...payload, bytes: html.length };
     }
   });
 

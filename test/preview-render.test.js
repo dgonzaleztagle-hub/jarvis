@@ -36,9 +36,29 @@ test('preview.render_html materializa el HTML y emite evento para el HUD', async
   assert.equal(emitted.url, res.url);
 });
 
-test('preview.render_html rechaza HTML vacío', async () => {
+test('preview.render_html rechaza sin html ni brief', async () => {
   const runtime = createRuntime({ dataDir: tempDataDir(), agents: { autoStart: false } });
   const res = await runtime.toolRegistry.get('preview.render_html').execute({ html: '   ' });
   assert.equal(res.ok, false);
-  assert.equal(res.error, 'HTML_REQUIRED');
+  assert.equal(res.error, 'BRIEF_OR_HTML_REQUIRED');
+});
+
+test('preview.render_html genera el HTML desde un brief con el modelo activo', async () => {
+  const fakeProvider = {
+    generateText: async () => ({ text: '```html\n<!doctype html><html><body><h1>Rishtedar</h1></body></html>\n```' })
+  };
+  const runtime = createRuntime({
+    dataDir: tempDataDir(),
+    agents: { autoStart: false },
+    model: { provider: fakeProvider }
+  });
+  const res = await runtime.toolRegistry.get('preview.render_html').execute({ brief: 'landing para Rishtedar', title: 'Landing' });
+  assert.equal(res.ok, true);
+  assert.match(res.url, /^\/preview\/preview_.*\.html$/);
+  // El HTML generado quedó limpio (sin fences markdown) y materializado.
+  const fs = require('fs');
+  const path = require('path');
+  const onDisk = fs.readFileSync(path.join(runtime.dataDir, 'previews', res.url.replace('/preview/', '')), 'utf-8');
+  assert.match(onDisk, /^<!doctype html>/);
+  assert.doesNotMatch(onDisk, /```/);
 });
