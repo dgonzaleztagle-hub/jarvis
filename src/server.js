@@ -154,6 +154,17 @@ async function router(req, res) {
       return sendJson(res, 200, { tools: runtime.toolRegistry.list() });
     }
 
+    if (req.method === 'GET' && url.pathname === '/graph') {
+      const graph = runtime.knowledgeGraph.read();
+      return sendJson(res, 200, {
+        stats: runtime.knowledgeGraph.stats(),
+        entities: graph.entities,
+        facts: graph.facts,
+        relationships: graph.relationships,
+        commitments: graph.commitments
+      });
+    }
+
     if (req.method === 'GET' && url.pathname === '/audit') {
       const limit = Number(url.searchParams.get('limit') || 100);
       return sendJson(res, 200, {

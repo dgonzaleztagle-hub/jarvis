@@ -55,7 +55,8 @@ npm test
 - `GET /` — HUD
 - `GET /health`, `GET /state`, `GET /events`, `GET /events/stream`, `GET /logs`
 - `GET /tools`, `GET /tasks`, `GET /tasks/:id`, `POST /tasks/tool`, `POST /tasks/:id/confirm`
-- `GET /audit` — registro auditable de ejecuciones de tools
+- `GET /audit` — registro auditable de ejecuciones de tools (incluye telemetría de procedencia)
+- `GET /graph` — volcado del grafo de conocimiento (entidades/hechos/relaciones/compromisos)
 - `POST /chat`
 - `GET /memory`, `POST /memory`, `POST /memory/:id/state`
 - `GET /vault`, `POST /vault/import-legacy`
