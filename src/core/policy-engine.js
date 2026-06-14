@@ -42,6 +42,20 @@ class PolicyEngine {
       if (ruleResult.reason) result.reasons.push(ruleResult.reason);
     }
 
+    // Procedencia — SOLO para herramientas de envío a terceros (tool.outbound).
+    // La confirmación se rige por la AUTORÍA del contenido, no solo por el riesgo:
+    // si el usuario dictó el texto literal, enviarlo directo (no molestar); si lo
+    // compuso el asistente, confirmar siempre. 'critical' nunca se relaja.
+    if (tool.outbound && context.provenance) {
+      if (context.provenance === 'llm_composed') {
+        result.requiresConfirmation = true;
+        result.reasons.push('El contenido a enviar lo redactó el asistente (no fue dictado literal): revisar antes de enviar.');
+      } else if (context.provenance === 'user_defined' && risk !== 'critical') {
+        result.requiresConfirmation = false;
+        result.reasons.push('El contenido fue dictado literalmente por el usuario: envío directo.');
+      }
+    }
+
     return result;
   }
 }

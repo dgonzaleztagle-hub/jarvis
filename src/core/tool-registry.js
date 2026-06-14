@@ -68,19 +68,19 @@ class ToolRegistry {
       };
     }
 
-    const policy = this.policyEngine.evaluate(tool, normalizedInput, context);
+    // Procedencia del contenido (¿lo dictó el usuario o lo compuso el LLM?). Se
+    // calcula ANTES de la política para que ésta pueda regir la confirmación de
+    // las herramientas de envío por autoría, no solo por riesgo. Ver provenance.js.
+    const provenance = context.userText
+      ? classifyProvenance({ input: normalizedInput, userText: context.userText }).provenance
+      : null;
+
+    const policy = this.policyEngine.evaluate(tool, normalizedInput, { ...context, provenance });
     if (!policy.allowed) {
       this.eventBus?.emit('tool_denied', { name, policy });
       this.audit({ tool: name, risk: policy.risk, outcome: 'denied', channel: context.channel, input: normalizedInput });
       return { ok: false, blocked: true, policy };
     }
-
-    // Telemetría de procedencia (no cambia la confirmación, solo observa): ¿el
-    // contenido lo dictó el usuario o lo compuso el LLM? Solo si hay texto del
-    // usuario en contexto. Ver src/core/provenance.js.
-    const provenance = context.userText
-      ? classifyProvenance({ input: normalizedInput, userText: context.userText }).provenance
-      : null;
 
     if (policy.requiresConfirmation && !context.confirmed) {
       this.eventBus?.emit('tool_confirmation_required', { name, input: normalizedInput, policy });

@@ -66,6 +66,7 @@ function createWhatsAppTools({ channel }) {
       name: 'wa.send_message',
       description: 'Enviar un mensaje de WhatsApp desde la cuenta personal del usuario. Input: { to (nombre de contacto/chat reciente o número con código de país), message (texto EXACTO a enviar) }. Si el usuario dictó el texto literal, se envía directo; si el texto lo redactaste tú, el runtime pedirá confirmación mostrando el borrador.',
       risk: 'medium',
+      outbound: true,
       permissions: ['whatsapp:send'],
       execute: async (input) => channel.sendMessage(input.to, input.message)
     }

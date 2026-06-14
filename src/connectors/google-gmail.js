@@ -693,6 +693,9 @@ function createGmailTools({ authFactory, summarizer, contactResolver }) {
       name: 'google.gmail.send_email',
       description: 'Send an email through the user Gmail account.',
       risk: 'high',
+      // Envío a terceros: la confirmación se rige por procedencia del contenido
+      // (cuerpo dictado literal → directo; redactado por el asistente → confirmar).
+      outbound: true,
       permissions: ['google:gmail:send'],
       required: ['to', 'subject', 'body'],
       aliases: {
