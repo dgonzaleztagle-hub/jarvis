@@ -36,19 +36,26 @@ npm test
 - **Google Workspace**: Gmail, Calendar, Docs, Contacts, Sheets, Tasks.
 - **Voz**: ElevenLabs / Edge TTS, STT (Gemini), espejo de voz en Telegram.
 - **Canales**: Telegram (con espejo de voz), WhatsApp personal (Baileys, QR).
+- **Memoria viva**: store curado con estados + **grafo de conocimiento** (entidades→hechos→
+  relaciones→compromisos, extracción LLM por turno; tools `memory.graph_query/graph_remember/commitments`).
 - **Agentes automáticos**: recetas declarativas (`agents.*`) con scheduler, presupuesto
-  diario, panel HUD y validación automática al crear (corre la misión una vez y,
-  si falla por la propia misión, puede corregirla con `agents.update_goal`).
-- **Conexiones MCP**: clientes a dashboards externos vía `connections.*` (genérico,
-  sin conectores a medida por cliente).
-- **Investigación**: evaluador de calidad de fuentes, web fetch.
-- **Visión**: lectura de QR/imágenes.
+  diario, panel HUD y validación automática al crear (`agents.update_goal`).
+- **Tareas autónomas multi-paso**: `tasks.run_autonomous` — planifica una tarea compleja,
+  la ejecuta paso a paso con auto-fix y se detiene ante acciones que requieren aprobación.
+- **Control de escritorio local** (Windows): `desktop.list_windows/focus_window/open_app/open_url`
+  vía PowerShell, gobernado por policy + audit. Requiere daemon en sesión interactiva.
+- **Gobernanza**: policy engine (confirmación por riesgo) + **audit trail** de toda ejecución
+  de tool (`audit.query`, `GET /audit`).
+- **Conexiones MCP**: clientes a dashboards externos vía `connections.*` (genérico, sin
+  conectores a medida por cliente).
+- **Investigación / visión**: evaluador de calidad de fuentes, web fetch, lectura de QR/imágenes.
 
 ## Endpoints principales
 
 - `GET /` — HUD
 - `GET /health`, `GET /state`, `GET /events`, `GET /events/stream`, `GET /logs`
 - `GET /tools`, `GET /tasks`, `GET /tasks/:id`, `POST /tasks/tool`, `POST /tasks/:id/confirm`
+- `GET /audit` — registro auditable de ejecuciones de tools
 - `POST /chat`
 - `GET /memory`, `POST /memory`, `POST /memory/:id/state`
 - `GET /vault`, `POST /vault/import-legacy`
