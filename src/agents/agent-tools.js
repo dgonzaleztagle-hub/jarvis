@@ -5,6 +5,8 @@ function summarizeAgent(agent) {
     goal: agent.goal,
     schedule: agent.schedule,
     maxRunsPerDay: agent.maxRunsPerDay,
+    maxCostPerDayUsd: agent.maxCostPerDayUsd,
+    costToday: agent.costToday || 0,
     enabled: agent.enabled,
     lastRunAt: agent.lastRunAt,
     lastResult: agent.lastResult ? { status: agent.lastResult.status, at: agent.lastResult.at } : null
@@ -15,7 +17,7 @@ function createAgentTools({ store, scheduler }) {
   return [
     {
       name: 'agents.create',
-      description: 'Crear un agente automático con una misión recurrente. Input: { name, goal (misión en lenguaje natural, será el mensaje que el agente ejecuta), schedule: { type: "daily"|"interval"|"manual", at: "HH:MM" (daily), minutes: N (interval) }, maxRunsPerDay (opcional, default 4) }. Requiere confirmación del usuario antes de crear. Tras crearlo, el sistema corre la misión UNA VEZ de inmediato para validar que de verdad funciona — el resultado vuelve en "validation". Si "validation" muestra que falló por un problema de la propia misión (ej: URL/dominio que no existe, instrucción ambigua que no usó ninguna herramienta), corrige el goal con agents.update_goal y vuelve a probar con agents.run_now antes de responder al usuario. Si tras corregir una vez sigue sin funcionar, dilo explícitamente y pide al usuario lo que falte — no reportes "creado" sin contar cómo salió la prueba.',
+      description: 'Crear un agente automático con una misión recurrente. Input: { name, goal (misión en lenguaje natural, será el mensaje que el agente ejecuta), schedule: { type: "daily"|"interval"|"manual", at: "HH:MM" (daily), minutes: N (interval) }, maxRunsPerDay (opcional, default 4), maxCostPerDayUsd (opcional, tope de gasto diario en USD; si una corrida lo cruza, el agente deja de correr ese día aunque le queden corridas) }. Requiere confirmación del usuario antes de crear. Tras crearlo, el sistema corre la misión UNA VEZ de inmediato para validar que de verdad funciona — el resultado vuelve en "validation". Si "validation" muestra que falló por un problema de la propia misión (ej: URL/dominio que no existe, instrucción ambigua que no usó ninguna herramienta), corrige el goal con agents.update_goal y vuelve a probar con agents.run_now antes de responder al usuario. Si tras corregir una vez sigue sin funcionar, dilo explícitamente y pide al usuario lo que falte — no reportes "creado" sin contar cómo salió la prueba.',
       risk: 'high',
       permissions: ['agents:create'],
       execute: async (input) => {

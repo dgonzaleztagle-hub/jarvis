@@ -355,7 +355,7 @@ function createRuntime(options = {}) {
     persona
   });
   const agentStore = new AgentStore({ dataDir });
-  const agentScheduler = new AgentScheduler({ store: agentStore, conversationRuntime, eventBus });
+  const agentScheduler = new AgentScheduler({ store: agentStore, conversationRuntime, eventBus, usageMeter });
   for (const tool of createAgentTools({ store: agentStore, scheduler: agentScheduler })) {
     toolRegistry.register(tool);
   }

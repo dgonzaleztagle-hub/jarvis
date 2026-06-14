@@ -12,10 +12,11 @@ function localHHMM(now) {
 }
 
 class AgentScheduler {
-  constructor({ store, conversationRuntime, eventBus, intervalMs = 60_000 }) {
+  constructor({ store, conversationRuntime, eventBus, usageMeter, intervalMs = 60_000 }) {
     this.store = store;
     this.conversationRuntime = conversationRuntime;
     this.eventBus = eventBus;
+    this.usageMeter = usageMeter || null;
     this.intervalMs = intervalMs;
     this.timer = null;
     this.running = new Set();
@@ -42,6 +43,11 @@ class AgentScheduler {
 
     const runsToday = agent.runsTodayDate === todayKey(now) ? agent.runsToday : 0;
     if (runsToday >= agent.maxRunsPerDay) return false;
+
+    if (agent.maxCostPerDayUsd != null) {
+      const costToday = agent.costTodayDate === todayKey(now) ? agent.costToday : 0;
+      if (costToday >= agent.maxCostPerDayUsd) return false;
+    }
 
     if (schedule.type === 'daily') {
       const alreadyToday = agent.lastRunAt && agent.lastRunAt.slice(0, 10) === todayKey(now);
@@ -77,6 +83,12 @@ class AgentScheduler {
       runsTodayDate: todayKey(now)
     });
 
+    // Costo de la corrida = delta del gasto total del usage-meter durante el
+    // handleMessage de este agente. No requiere etiquetar cada llamada al
+    // modelo con agentId: las corridas de agentes no se solapan (this.running
+    // las serializa por id), así que el delta global = costo de esta corrida.
+    const costBefore = this.usageMeter?.summary().totals.costUsd || 0;
+
     try {
       // Cada corrida es el mismo pipeline de conversación, con la misión como
       // mensaje. El canal 'agent' evita contaminar el historial del HUD.
@@ -93,10 +105,12 @@ class AgentScheduler {
         at: now.toISOString(),
         trigger
       };
+      this.recordRunCost(agent, costBefore, now);
       this.store.update(agent.id, { lastResult: result });
       this.eventBus?.emit('agent_run_completed', { agentId: agent.id, name: agent.name, ...result });
       return result;
     } catch (error) {
+      this.recordRunCost(agent, costBefore, now);
       const result = { status: 'failed', error: error.message, at: now.toISOString(), trigger };
       this.store.update(agent.id, { lastResult: result });
       this.eventBus?.emit('agent_run_failed', { agentId: agent.id, name: agent.name, ...result });
@@ -104,6 +118,17 @@ class AgentScheduler {
     } finally {
       this.running.delete(agent.id);
     }
+  }
+
+  recordRunCost(agent, costBefore, now) {
+    if (!this.usageMeter) return;
+    const costAfter = this.usageMeter.summary().totals.costUsd;
+    const runCostUsd = Math.max(0, costAfter - costBefore);
+    const sameDay = agent.costTodayDate === todayKey(now);
+    this.store.update(agent.id, {
+      costToday: (sameDay ? agent.costToday : 0) + runCostUsd,
+      costTodayDate: todayKey(now)
+    });
   }
 }
 

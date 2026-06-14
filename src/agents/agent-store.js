@@ -61,10 +61,16 @@ class AgentStore {
       schedule: def.schedule || { type: 'manual' },
       // Presupuesto duro: el scheduler nunca ejecuta más allá de esto por día.
       maxRunsPerDay: Math.max(1, Math.min(Number(def.maxRunsPerDay) || 4, 24)),
+      // Tope de gasto diario en USD (opcional). null = sin tope de costo (solo
+      // rige maxRunsPerDay). Corte automático: una corrida que ya cruzó el tope
+      // no dispara la siguiente, aunque queden corridas/día disponibles.
+      maxCostPerDayUsd: def.maxCostPerDayUsd != null ? Math.max(0, Number(def.maxCostPerDayUsd)) : null,
       enabled: def.enabled !== false,
       lastRunAt: null,
       runsToday: 0,
       runsTodayDate: null,
+      costToday: 0,
+      costTodayDate: null,
       lastResult: null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()

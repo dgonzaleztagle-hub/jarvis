@@ -660,7 +660,8 @@ Formato no es decoración — es parte del contrato de cada respuesta. Reglas ap
 - [x] Notificación de corridas programadas (voz HUD + Telegram)
 - [x] Invariante anti-recursión (corridas no gestionan agentes) + go-ahead conversacional cuenta como confirmación (risk high) + confirmaciones duplicadas se reemplazan
 - [x] **Ejecutor autónomo multi-paso** (Fase D de la fusión, `src/agents/task-executor.js`): tool `tasks.run_autonomous` que planifica una tarea compleja en pasos, los ejecuta encadenando resultados con auto-fix (1 reintento), y se detiene ante pasos de alto riesgo (`needs_approval`). Anti-recursión por policy. Respeta audit + policy en cada paso. Ver [docs/FUSION_KNOWLEDGE_MERGE.md](../docs/FUSION_KNOWLEDGE_MERGE.md)
-- [ ] Presupuesto en $ por agente/día con corte automático, namespace de memoria por agente
+- [x] Presupuesto en $ por agente/día con corte automático: `maxCostPerDayUsd` opcional en `agents.create`; el scheduler mide el delta del usage-meter en cada corrida y acumula `costToday` (resetea por día como `runsToday`). Si se cruza el tope, el agente no corre más ese día aunque le queden corridas/día. Sin `maxCostPerDayUsd` (default) no cambia nada. 3 tests en `test/agent-cost-budget.test.js`
+- [ ] Namespace de memoria por agente
 - [ ] Skill registry con lifecycle completo, procedural memory
 - [~] Ruteo de modelos por tipo de tarea (barato conversa, fuerte construye): **infraestructura hecha** — catálogo por tier (`src/model/model-catalog.js`: Gemini Flash free / Haiku / Sonnet fuerte recomendado / Opus no-recomendado), swap en caliente dentro de un ecosistema (`model.set_active`, `GET/POST /model/active`), cruce de proveedor = onboarding. Principio: recomendar el modelo MEDIO capaz (Sonnet), no el tope. **Falta** la capa de comportamiento: disclaimer calibrado antes + recomendación REACTIVA de subir de tier cuando el usuario se queja (ver memoria estrategia de modelos)
 
