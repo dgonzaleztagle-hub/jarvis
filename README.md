@@ -45,7 +45,11 @@ npm test
 - **Control de escritorio local** (Windows): `desktop.list_windows/focus_window/open_app/open_url`
   vía PowerShell, gobernado por policy + audit. Requiere daemon en sesión interactiva.
 - **Gobernanza**: policy engine (confirmación por riesgo) + **audit trail** de toda ejecución
-  de tool (`audit.query`, `GET /audit`).
+  de tool (`audit.query`, `GET /audit`) + telemetría de procedencia (¿lo dictó el usuario o lo
+  compuso el LLM?, `src/core/provenance.js`).
+- **Escala de modelos**: catálogo por tier (`src/model/model-catalog.js`) — Gemini Flash (free) /
+  Haiku / Sonnet (fuerte recomendado) / Opus. Swap en caliente dentro de un ecosistema
+  (`model.set_active`, `GET/POST /model/active`); cruce de proveedor = onboarding.
 - **Conexiones MCP**: clientes a dashboards externos vía `connections.*` (genérico, sin
   conectores a medida por cliente).
 - **Investigación / visión**: evaluador de calidad de fuentes, web fetch, lectura de QR/imágenes.
@@ -65,7 +69,7 @@ npm test
 - `GET/POST /voice/*`, `GET /config/voice`
 - `GET /agents`, `POST /agents/run`, `POST /agents/toggle`, `POST /agents/delete`, `GET /agents/notifications`
 - `GET/POST /channels/telegram/*`
-- `GET /youtube/search`, `GET /model/usage`, `GET /trust-mode`
+- `GET /youtube/search`, `GET /model/usage`, `GET/POST /model/active`, `GET /trust-mode`
 
 ## Nota de seguridad
 

@@ -110,6 +110,15 @@ class AnthropicProvider {
     this.pricing = pricing;
   }
 
+  // Swap en caliente dentro de Anthropic: como generateJson/generateText/
+  // analyzeImage leen this.model en cada llamada, cambiarlo aplica de inmediato
+  // sin reiniciar. El pricing acompaña al modelo (Sonnet/Opus cuestan distinto).
+  setModel(model, pricing) {
+    if (model) this.model = model;
+    if (pricing) this.pricing = pricing;
+    return this.model;
+  }
+
   estimateCost(usage = {}) {
     const inputTokens = Number(usage.input_tokens || usage.inputTokens || 0);
     const outputTokens = Number(usage.output_tokens || usage.outputTokens || 0);

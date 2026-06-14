@@ -21,6 +21,7 @@ const { createGoogleContactsTools } = require('./connectors/google-contacts');
 const { createGoogleSheetsTools } = require('./connectors/google-sheets');
 const { createGoogleTasksTools } = require('./connectors/google-tasks');
 const { createModelProvider, createModelTools } = require('./model/model-tools');
+const modelCatalog = require('./model/model-catalog');
 const { UsageMeter } = require('./model/usage-meter');
 const { ConversationRuntime } = require('./conversation/conversation-runtime');
 const { resolvePersona, loadPersonaOverlay } = require('./conversation/persona-core');
@@ -102,6 +103,59 @@ function createRuntime(options = {}) {
     vault: credentialVault,
     usageMeter,
     ...(options.model || {})
+  });
+
+  // Escala de modelos: el modelo activo y el swap en caliente dentro del mismo
+  // ecosistema (ver src/model/model-catalog.js). Cruzar de proveedor es
+  // onboarding (key nueva) — no soportado en caliente todavía.
+  function getActiveModelId() {
+    if (typeof modelProvider.model === 'string') return modelProvider.model;
+    if (Array.isArray(modelProvider.models) && modelProvider.models[0]) return modelProvider.models[0];
+    return 'unknown';
+  }
+  function getActiveModel() {
+    const id = getActiveModelId();
+    return modelCatalog.getModel(id) || { id, label: id, tier: 'desconocido', tierRank: 0 };
+  }
+  function setActiveModel(modelId) {
+    const target = modelCatalog.getModel(modelId);
+    if (!target) throw new Error(`MODEL_NOT_IN_CATALOG: ${modelId}`);
+    const active = modelCatalog.getModel(getActiveModelId());
+    if (active && target.provider !== active.provider) {
+      throw new Error(`MODEL_SWAP_NEEDS_ONBOARDING: cambiar de ${active.provider} a ${target.provider} requiere su API key y reinicio`);
+    }
+    if (typeof modelProvider.setModel !== 'function') {
+      throw new Error('MODEL_SWAP_UNSUPPORTED: el proveedor activo no permite swap en caliente');
+    }
+    modelProvider.setModel(target.id, target.pricing);
+    return getActiveModel();
+  }
+
+  toolRegistry.register({
+    name: 'model.catalog',
+    description: 'Mostrar la escala de modelos disponibles (tiers, fortalezas, cuál es gratis, cuál es el recomendado) y cuál está activo ahora. Útil para "¿con qué modelo estás pensando?" o "¿qué modelos puedo usar?". Sin input.',
+    risk: 'low',
+    permissions: [],
+    execute: async () => ({
+      active: getActiveModel(),
+      catalog: modelCatalog.listCatalog(),
+      hotSwapTargets: modelCatalog.hotSwapTargets(getActiveModelId()).map((m) => m.id)
+    })
+  });
+
+  toolRegistry.register({
+    name: 'model.set_active',
+    description: 'Cambiar el modelo activo de Jarvis. Swap en caliente si es del mismo ecosistema (ej: Haiku→Sonnet en Anthropic, sin reinicio); cambiar de proveedor requiere onboarding. Úsalo cuando el usuario, tras un resultado pobre, acepta probar un modelo más potente, o pide explícitamente cambiar de modelo. Input: { model: "id del catálogo" }.',
+    risk: 'medium',
+    permissions: ['model:manage'],
+    execute: async (input) => {
+      try {
+        const active = setActiveModel(String(input.model || ''));
+        return { ok: true, active };
+      } catch (err) {
+        return { ok: false, error: err.message };
+      }
+    }
   });
 
   toolRegistry.register({
@@ -467,6 +521,8 @@ function createRuntime(options = {}) {
     }),
     googleAuthFactory,
     modelProvider,
+    getActiveModel,
+    setActiveModel,
     conversationRuntime,
     persona,
     agentStore,

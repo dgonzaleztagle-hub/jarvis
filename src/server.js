@@ -277,6 +277,19 @@ async function router(req, res) {
       return sendJson(res, 200, { usage: runtime.usageMeter.summary() });
     }
 
+    if (req.method === 'GET' && url.pathname === '/model/active') {
+      return sendJson(res, 200, { active: runtime.getActiveModel() });
+    }
+
+    if (req.method === 'POST' && url.pathname === '/model/active') {
+      const body = await readJson(req);
+      try {
+        return sendJson(res, 200, { ok: true, active: runtime.setActiveModel(body.model) });
+      } catch (err) {
+        return sendJson(res, 400, { ok: false, error: err.message });
+      }
+    }
+
     if (req.method === 'GET' && url.pathname === '/agents') {
       return sendJson(res, 200, { agents: runtime.agentStore.list() });
     }
