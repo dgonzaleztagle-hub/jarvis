@@ -45,7 +45,10 @@ reemplazar nada.
 
 ## Secuencia de implementación (ordenada por dependencias y riesgo)
 
-> Estado: **A hecha** · **B descartada** · **C audit hecho** · **D hecha** · **E (local) hecha** (resto de C, E2 sidecar remoto, y F pendientes).
+> **Plan cerrado (2026-06-14).** Estado: **A hecha** · **B descartada (redundante)** · **C audit hecho**
+> (auto-aprobación pendiente) · **D hecha** · **E control local hecha** · **F descartada (UX)**.
+> Pendientes opcionales fuera del plan núcleo: completar C (auto-aprobación + aprobaciones por
+> Telegram), E2 (sidecar remoto multi-máquina), extensión de navegador para nivel pestaña.
 
 ### Fase A — Memory Knowledge Graph ✅ IMPLEMENTADA (2026-06-14)
 Reimplementación propia de la idea (no copia) en `src/memory/knowledge-graph.js` +
@@ -127,10 +130,15 @@ sidecar liviano (en Node, no Go) que se conecta por WebSocket autenticado y expo
 terminal de esa máquina, con las mismas tools pero parámetro `target`. De mark-xxxix: `browser_control`
 con perfil real del navegador (abre las pestañas del usuario con su sesión). No urgente para Daniel.
 
-### Fase F — Awareness + struggle-detector *(proactividad; usa captura de la Fase E)*
-Adaptar de companion: vigilar la pantalla (captura del sidecar de Fase E + OCR) y ofrecer ayuda
-proactiva cuando detecta que el usuario está atascado (trial-and-error, undo/revert, bajo
-progreso), con ventana de gracia y cooldown.
+### Fase F — Awareness + struggle-detector ❌ DESCARTADA POR AHORA (decisión ejecutiva 2026-06-14)
+La idea: vigilar la pantalla en continuo + OCR y ofrecer ayuda proactiva al detectar que el usuario
+está atascado. Existe en companion (`struggle-detector.js`) y, más desarrollada, en inv/jarvis
+("Continuous Awareness", captura cada 5-10s + OCR + struggle detection + overlay).
+**Por qué se descarta:** Daniel ya usó esta clase de feature (la sacó de inv/jarvis) y la UX no lo
+convenció — la vigilancia continua + sugerencias proactivas requiere mucha definición fina (cuándo
+intervenir, con qué criterio, sin ser invasiva) para salir bien, y el costo/privacidad de capturar
+pantalla todo el tiempo es alto. Decisión: no construirla ahora. Reconsiderar en una fase muy futura
+si aparece un caso de uso claro y un diseño de intervención que no moleste.
 
 ## Fuera de alcance (por ahora)
 
