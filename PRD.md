@@ -48,6 +48,8 @@ No es un chatbot. No es SaaS. Es software local que piensa, recuerda, aprende y 
 - Agencias de marketing / diseño
 - Abogados / contadores
 
+Detalle operativo por vertical (necesidades, fuentes preferidas, riesgos) en [docs/VERTICAL_PACKS.md](../docs/VERTICAL_PACKS.md) — referencia para Fase 9 (Verticales especializados).
+
 **Perfil técnico:** no desarrollador. Instala como app. No abre terminales. No edita archivos de configuración.
 
 ---
@@ -569,6 +571,8 @@ src/modules/<nombre>/
   tests.js        pruebas
 ```
 
+**Referencias técnicas:** catálogo de módulos base y superficie visual en [docs/MODULE_BOUNDARIES.md](../docs/MODULE_BOUNDARIES.md); matriz de superpoderes (módulo↔presentador↔riesgo) en [docs/SUPERPOWERS_CATALOG.md](../docs/SUPERPOWERS_CATALOG.md).
+
 ### Flujo Conversacional
 
 ```
@@ -582,6 +586,22 @@ src/modules/<nombre>/
 8. Canal recibe: speak (voz) + visual (chat) + toolResults (datos)
 9. HUD abre artefacto si resultado es largo
 ```
+
+### Contratos de Presentación (implementados)
+
+Formato no es decoración — es parte del contrato de cada respuesta. Reglas aplicadas vía `human-readable-format.js` y `output-value-contract.js`:
+
+- **`format`**: si el usuario pide elementos (correos, eventos, archivos, tareas), la respuesta usa lista/numeración, no un párrafo único. El HUD preserva saltos de línea.
+- **`outputValue`** — qué le prometió Jarvis al usuario, no solo cómo se ve:
+  - `inspection`: listar/mostrar elementos completos y ordenados.
+  - `summary`: síntesis real del significado, nunca copiar snippets sin transformar.
+  - `analysis`: hallazgos, importancia, riesgos, acciones.
+  - `comparison`: criterios, diferencias, tradeoffs.
+  - `response`: respuesta directa.
+  - Si el runtime promete "resumen" pero solo hay texto extraído, debe llamarse vista previa/extracto, no resumen.
+- **Triage**: si el usuario pregunta por valor, prioridad, spam, riesgo o "necesita acción", Jarvis clasifica (tipo, nivel de atención, motivo, acción sugerida) separando hechos observados de inferencia — no solo describe.
+- **Confirmaciones como estado, no conversación libre**: una acción riesgosa en `waiting_confirmation` se resuelve por el runtime (reanuda esa tarea), no por el modelo creando una acción nueva. Respuestas cortas (`sí`, `dale`, `confirmo`) confirman la tarea pendiente más reciente y visible donde el usuario está mirando — sin doble confirmación ni loops.
+- **Fallo de modelo ≠ fallo de formato**: si el modelo responde texto útil fuera del JSON esperado, el runtime intenta rescatarlo y responder, en vez de reportar "no pude contactar el modelo". Solo se reporta caída real ante fallo de red/cuota/credencial.
 
 ---
 
@@ -990,7 +1010,7 @@ Un cliente como Vikram podría recibir solo el Companion Mode en su instalación
 7. **Degraded mode** — si algo falla, Jarvis sigue siendo útil en lo que puede.
 8. **Voz activa** — Jarvis nunca se queda callado en tareas largas.
 9. **HUD limpio** — nunca apilado, nunca lleno de info al mismo tiempo.
-10. **Generalización de bugs** — cada bug es señal del sistema, no caso aislado.
+10. **Generalización de bugs** — cada bug es señal del sistema, no caso aislado. Ante cualquier bug o feedback, revisar tres niveles: (1) caso puntual — qué falló exactamente; (2) patrón general — qué clase de error similar podría aparecer en otros módulos; (3) regla futura — qué contrato, test, presenter, prompt o documento evita repetirlo. Un arreglo que solo corrige el caso puntual queda incompleto. Frase guía: *no arreglar el ejemplo, arreglar la forma de pensar que produjo el ejemplo*.
 11. **Gobernanza de datos sensibles** — médico/legal/financiero requiere revisión humana.
 12. **Autonomía con techo** — los agentes tienen presupuesto duro, kill switch visible y jamás crean otros agentes. El usuario siempre puede ver qué corre en su nombre.
 13. **Transparencia de identidad** — si Jarvis actúa frente a terceros (reuniones, correos), los terceros deben poder saber que es un asistente.
