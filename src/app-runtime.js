@@ -76,7 +76,14 @@ function createRuntime(options = {}) {
     return null;
   });
   const auditTrail = new AuditTrail({ dataDir });
-  const toolRegistry = new ToolRegistry({ policyEngine, eventBus, auditTrail });
+  // memoryStore se declara más abajo, pero el resolver solo se invoca durante
+  // ejecuciones de tools (mucho después de que termine el arranque).
+  const toolRegistry = new ToolRegistry({
+    policyEngine,
+    eventBus,
+    auditTrail,
+    recipientResolver: async (query) => memoryStore.resolveRecipient(query)
+  });
   const taskRuntime = new TaskRuntime({ eventBus, toolRegistry });
   const workingMemoryStore = new WorkingMemoryStore();
   const memoryStore = new MemoryStore({ dataDir });

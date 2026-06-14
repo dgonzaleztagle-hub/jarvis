@@ -1,12 +1,20 @@
 const { normalizeInput, validateRequired } = require('./input-normalizer');
 const { classifyProvenance } = require('./provenance');
 
+// Un destinatario "directo" (email o teléfono) no necesita resolverse contra
+// la libreta de contactos, así que no puede ser ambiguo.
+function looksLikeDirectAddress(value) {
+  if (value.includes('@')) return true;
+  return /^[+\d\s()-]{6,}$/.test(value);
+}
+
 class ToolRegistry {
-  constructor({ policyEngine, eventBus, auditTrail }) {
+  constructor({ policyEngine, eventBus, auditTrail, recipientResolver }) {
     this.tools = new Map();
     this.policyEngine = policyEngine;
     this.eventBus = eventBus;
     this.auditTrail = auditTrail || null;
+    this.recipientResolver = recipientResolver || null;
   }
 
   audit(entry) {
@@ -75,7 +83,22 @@ class ToolRegistry {
       ? classifyProvenance({ input: normalizedInput, userText: context.userText }).provenance
       : null;
 
-    const policy = this.policyEngine.evaluate(tool, normalizedInput, { ...context, provenance });
+    // Ambigüedad de destinatario (solo para outbound): si "to"/"recipient" no es
+    // ya una dirección directa (email/teléfono), resolvemos contra la libreta de
+    // contactos. Si hay 2+ contactos empatados, el policy-engine exige
+    // confirmación aunque el contenido sea literal — ver policy-engine.js.
+    let recipientAmbiguous = false;
+    if (tool.outbound && this.recipientResolver) {
+      const recipient = normalizedInput.to ?? normalizedInput.recipient;
+      if (recipient && !looksLikeDirectAddress(String(recipient))) {
+        try {
+          const resolution = await this.recipientResolver(String(recipient));
+          recipientAmbiguous = !!resolution?.ambiguous;
+        } catch (_) { /* resolución best-effort; no bloquea la ejecución */ }
+      }
+    }
+
+    const policy = this.policyEngine.evaluate(tool, normalizedInput, { ...context, provenance, recipientAmbiguous });
     if (!policy.allowed) {
       this.eventBus?.emit('tool_denied', { name, policy });
       this.audit({ tool: name, risk: policy.risk, outcome: 'denied', channel: context.channel, input: normalizedInput });

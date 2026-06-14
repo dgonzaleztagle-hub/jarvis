@@ -56,6 +56,16 @@ class PolicyEngine {
       }
     }
 
+    // Destinatario ambiguo (2+ contactos empatan con lo que escribió el
+    // usuario): SOLO agrega confirmación, nunca la quita — ni siquiera si el
+    // contenido fue dictado literal. Va DESPUÉS de la procedencia para poder
+    // revertir esa relajación. Evita enviar a la persona equivocada por una
+    // resolución de contacto ambigua.
+    if (tool.outbound && context.recipientAmbiguous) {
+      result.requiresConfirmation = true;
+      result.reasons.push('El destinatario es ambiguo (hay más de un contacto que calza): confirmar antes de enviar.');
+    }
+
     return result;
   }
 }

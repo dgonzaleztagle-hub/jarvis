@@ -44,6 +44,32 @@ test('sin procedencia conocida (no_content / null) el comportamiento por riesgo 
   assert.equal(pe.evaluate(tool, {}, { provenance: 'no_content' }).requiresConfirmation, true);
 });
 
+// --- Destinatario ambiguo: agrega confirmación, nunca la quita ---
+
+test('destinatario ambiguo revierte la relajación por contenido literal', () => {
+  const pe = new PolicyEngine();
+  const tool = { name: 'mail.send', risk: 'high', outbound: true };
+  assert.equal(
+    pe.evaluate(tool, {}, { provenance: 'user_defined', recipientAmbiguous: true }).requiresConfirmation,
+    true
+  );
+});
+
+test('destinatario NO ambiguo conserva la relajación por contenido literal', () => {
+  const pe = new PolicyEngine();
+  const tool = { name: 'mail.send', risk: 'high', outbound: true };
+  assert.equal(
+    pe.evaluate(tool, {}, { provenance: 'user_defined', recipientAmbiguous: false }).requiresConfirmation,
+    false
+  );
+});
+
+test('herramienta NO-outbound no se ve afectada por recipientAmbiguous', () => {
+  const pe = new PolicyEngine();
+  const tool = { name: 'files.delete', risk: 'low' };
+  assert.equal(pe.evaluate(tool, {}, { recipientAmbiguous: true }).requiresConfirmation, false);
+});
+
 // --- Nivel tool-registry: flujo completo (classifyProvenance + policy) ---
 
 test('E2E: envío con cuerpo dictado literal se ejecuta sin confirmación; compuesto la pide', async () => {
@@ -71,4 +97,48 @@ test('E2E: envío con cuerpo dictado literal se ejecuta sin confirmación; compu
   );
   assert.equal(composed.confirmationRequired, true);
   assert.equal(sent, 1); // no se envió
+});
+
+// --- E2E: ambigüedad de destinatario vía recipientResolver ---
+
+test('E2E: destinatario ambiguo en la libreta exige confirmación aunque el contenido sea literal', async () => {
+  const registry = new ToolRegistry({
+    policyEngine: new PolicyEngine(),
+    recipientResolver: async (query) => {
+      if (query === 'Patricio') return { record: { id: 'c1' }, ambiguous: true, candidates: [{ id: 'c1' }, { id: 'c2' }] };
+      return { record: { id: 'c1' }, ambiguous: false, candidates: [{ id: 'c1' }] };
+    }
+  });
+  let sent = 0;
+  registry.register({
+    name: 'mail.send', risk: 'high', outbound: true,
+    execute: async () => { sent += 1; return 'sent'; }
+  });
+
+  // Dos "Patricio" en la libreta: aunque el cuerpo sea dictado literal, confirma.
+  const ambiguous = await registry.execute(
+    'mail.send',
+    { to: 'Patricio', body: 'nos vemos a las 5' },
+    { userText: 'mándale a Patricio que diga: nos vemos a las 5' }
+  );
+  assert.equal(ambiguous.confirmationRequired, true);
+  assert.equal(sent, 0);
+
+  // Un solo "Rosie": el literal se envía directo, como siempre.
+  const unambiguous = await registry.execute(
+    'mail.send',
+    { to: 'Rosie', body: 'nos vemos a las 5' },
+    { userText: 'mándale a Rosie que diga: nos vemos a las 5' }
+  );
+  assert.equal(unambiguous.ok, true);
+  assert.equal(sent, 1);
+
+  // Dirección directa (email): no se resuelve contra la libreta, no hay ambigüedad posible.
+  const directEmail = await registry.execute(
+    'mail.send',
+    { to: 'patricio@example.com', body: 'nos vemos a las 5' },
+    { userText: 'mándale a patricio@example.com que diga: nos vemos a las 5' }
+  );
+  assert.equal(directEmail.ok, true);
+  assert.equal(sent, 2);
 });

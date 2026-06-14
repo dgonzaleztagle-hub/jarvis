@@ -302,7 +302,7 @@ class MemoryStore {
     ].filter(Boolean).join(' '));
   }
 
-  search(query, options = {}) {
+  searchScored(query, options = {}) {
     const intent = options.intent || inferMemoryIntent(query);
     const terms = normalizeText(query)
       .split(' ')
@@ -313,7 +313,7 @@ class MemoryStore {
     const allowedStates = options.states || inferStatesForIntent(intent);
     const allowedTypes = options.types || inferTypesForIntent(intent);
 
-    const records = this.readIndex().records
+    return this.readIndex().records
       .filter((summary) => allowedStates.includes(summary.state))
       .map((summary) => this.get(summary.id))
       .filter(Boolean)
@@ -338,8 +338,10 @@ class MemoryStore {
       .filter((item) => item.score > 0)
       .sort((a, b) => b.score - a.score)
       .slice(0, limit);
+  }
 
-    return records.map((item) => item.record);
+  search(query, options = {}) {
+    return this.searchScored(query, options).map((item) => item.record);
   }
 
   buildPromptContext(query, options = {}) {
@@ -361,6 +363,26 @@ class MemoryStore {
       types: ['contact'],
       states: ['verified', 'candidate']
     })[0] || null;
+  }
+
+  // Para herramientas outbound (wa.send_message, gmail.send_email): además del
+  // mejor match, dice si hay AMBIGÜEDAD (2+ contactos empatados en el puntaje
+  // más alto) — el policy-engine usa esto para exigir confirmación aunque el
+  // contenido haya sido dictado literal, evitando enviar a quien no es.
+  resolveRecipient(query) {
+    const scored = this.searchScored(query, {
+      limit: 5,
+      types: ['contact'],
+      states: ['verified', 'candidate']
+    });
+    if (scored.length === 0) return { record: null, ambiguous: false, candidates: [] };
+    const topScore = scored[0].score;
+    const tied = scored.filter((item) => item.score === topScore);
+    return {
+      record: scored[0].record,
+      ambiguous: tied.length > 1,
+      candidates: scored.map((item) => item.record)
+    };
   }
 
   getAssistantSelfKnowledge() {
