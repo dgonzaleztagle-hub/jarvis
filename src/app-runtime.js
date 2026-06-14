@@ -31,6 +31,7 @@ const { WhatsAppChannel } = require('./channels/whatsapp-channel');
 const { createWhatsAppTools, isLiteralDictation } = require('./channels/whatsapp-tools');
 const { createResearchTools } = require('./research/source-quality');
 const { createWebFetchTools } = require('./connectors/web-fetch');
+const { createDesktopTools } = require('./connectors/desktop-control');
 const { createMcpConnectionTools } = require('./connectors/mcp-connections');
 const { PresenterRegistry } = require('./presenters/presenter-registry');
 const { registerGooglePresenters } = require('./presenters/google-presenters');
@@ -258,6 +259,12 @@ function createRuntime(options = {}) {
   }
 
   for (const tool of createWebFetchTools()) {
+    toolRegistry.register(tool);
+  }
+
+  // Manos en la máquina local (Fase E): listar/enfocar ventanas, abrir apps/URLs.
+  // Riesgo alto en las que mueven la máquina → confirmación por policy + audit.
+  for (const tool of createDesktopTools()) {
     toolRegistry.register(tool);
   }
 

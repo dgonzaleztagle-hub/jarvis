@@ -45,7 +45,7 @@ reemplazar nada.
 
 ## Secuencia de implementación (ordenada por dependencias y riesgo)
 
-> Estado: **A hecha** · **B descartada (redundante)** · **C audit hecho** · **D hecha** (resto de C, y E, F pendientes).
+> Estado: **A hecha** · **B descartada** · **C audit hecho** · **D hecha** · **E (local) hecha** (resto de C, E2 sidecar remoto, y F pendientes).
 
 ### Fase A — Memory Knowledge Graph ✅ IMPLEMENTADA (2026-06-14)
 Reimplementación propia de la idea (no copia) en `src/memory/knowledge-graph.js` +
@@ -102,11 +102,30 @@ Reimplementación propia de la idea de mark-xxxix (planner→executor→error-ha
 **Nota:** reemplaza la idea del `replan` de mark-xxxix por un auto-fix por paso + parada gobernada,
 más simple y seguro que re-planificar el objetivo completo en bucle.
 
-### Fase E — Manos remotas: daemon + sidecar *(la más grande; requiere C lista)*
-Reimplementar de inv/jarvis: arquitectura daemon-central + sidecar liviano que se conecta por
-WebSocket y expone desktop/browser/terminal/clipboard de cada máquina. Resuelve de forma limpia
-"controlar pestañas/apps sin meter computer-use pesado en el core" (ver PRD §4 P2). De mark-xxxix:
-`browser_control` con perfil real del navegador (abre las pestañas del usuario con su sesión).
+### Fase E — Control de escritorio local ✅ IMPLEMENTADA (2026-06-14)
+**Reformulada vs el plan original:** inv/jarvis separa daemon (server remoto) + sidecars porque su
+daemon vive en la nube. codex es **local-first** — el daemon ya corre en el PC del usuario, así que
+NO necesita sidecar para controlar ESA máquina; lo hace directo. (El sidecar para máquinas remotas
+queda como Fase E2 futura, ver abajo.) Además se evita el stack Go: todo en Node + PowerShell.
+- `src/connectors/desktop-control.js`: tools `desktop.list_windows`, `desktop.focus_window`
+  (resuelve "enfoca la ventana donde tengo X"), `desktop.open_app`, `desktop.open_url`.
+- **Windows-first** vía PowerShell con C# inline (Add-Type / EnumWindows / SetForegroundWindow),
+  **sin DLL externa** (companion usaba una .dll compilada; acá no, para empaquetar limpio el .exe).
+  mac/linux: responden honestamente "no soportado aún".
+- **Seguridad:** el query viaja por variable de entorno, nunca interpolado en el script (anti
+  inyección PowerShell); apps/URLs vía spawn con args separados; open_url solo http(s).
+- **Gobernanza:** focus_window/open_app son `risk: high` (confirmación salvo go-ahead), open_url
+  `medium`, list_windows `low`. Todo pasa por policy + audit (Fase C).
+- Tests en `test/desktop-control.test.js` (6, smoke real de EnumWindows en Windows).
+- **Matiz operativo:** el control de escritorio requiere que el daemon corra en la **sesión
+  interactiva** del usuario (un proceso headless/servicio no ve las ventanas). Natural en un .exe
+  de escritorio; documentado para el empaquetado white-label.
+
+### Fase E2 — Sidecar remoto multi-máquina *(futura, para white-label multi-PC)*
+Cuando un cliente necesite que Jarvis actúe en OTRA máquina distinta a donde corre el daemon:
+sidecar liviano (en Node, no Go) que se conecta por WebSocket autenticado y expone desktop/browser/
+terminal de esa máquina, con las mismas tools pero parámetro `target`. De mark-xxxix: `browser_control`
+con perfil real del navegador (abre las pestañas del usuario con su sesión). No urgente para Daniel.
 
 ### Fase F — Awareness + struggle-detector *(proactividad; usa captura de la Fase E)*
 Adaptar de companion: vigilar la pantalla (captura del sidecar de Fase E + OCR) y ofrecer ayuda

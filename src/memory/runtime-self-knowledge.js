@@ -5,6 +5,8 @@ function inferCapabilityGroup(toolName = '') {
   if (/^research\./.test(toolName)) return 'Investigacion y criterio';
   if (/^memory\./.test(toolName)) return 'Memoria';
   if (/^connections\./.test(toolName)) return 'Conexiones externas (MCP)';
+  if (/^desktop\./.test(toolName)) return 'Control de escritorio (local)';
+  if (/^tasks\./.test(toolName)) return 'Tareas autónomas';
   return 'Otras capacidades';
 }
 
