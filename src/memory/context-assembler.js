@@ -172,9 +172,10 @@ function buildTier2Lines(store, domains, query) {
 }
 
 class ContextAssembler {
-  constructor({ memoryStore, workingMemoryStore } = {}) {
+  constructor({ memoryStore, workingMemoryStore, knowledgeGraph } = {}) {
     this.store = memoryStore;
     this.workingStore = workingMemoryStore;
+    this.graph = knowledgeGraph || null;
   }
 
   assemble({ userText = '', recentHistory = '' } = {}) {
@@ -216,6 +217,28 @@ class ContextAssembler {
       if (tier2Lines.length > 0) {
         const block = tier2Lines.join('\n');
         const allowed = block.slice(0, Math.min(CHAR_BUDGET.tier2, budget - 200));
+        if (allowed.trim()) {
+          sections.push(allowed);
+          budget -= allowed.length;
+        }
+      }
+    }
+
+    // Grafo de conocimiento: entidades del mundo del usuario relevantes al
+    // mensaje + compromisos abiertos. Lo que el store plano no modela.
+    if (this.graph && budget > 400) {
+      const graphLines = [];
+      try {
+        const knowledge = this.graph.getKnowledgeForMessage(userText, { limit: 4 });
+        if (knowledge) graphLines.push(knowledge);
+        const commitments = this.graph.getOpenCommitmentsSummary({ limit: 4 });
+        if (commitments) graphLines.push(`Compromisos abiertos:\n${commitments}`);
+      } catch (_) {
+        // El grafo nunca debe romper el ensamblado de contexto.
+      }
+      if (graphLines.length > 0) {
+        const block = `[grafo de conocimiento]\n${graphLines.join('\n')}`;
+        const allowed = block.slice(0, Math.min(1200, budget - 200));
         if (allowed.trim()) {
           sections.push(allowed);
           budget -= allowed.length;

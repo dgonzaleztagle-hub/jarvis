@@ -6,6 +6,7 @@ const { ToolRegistry } = require('./core/tool-registry');
 const { TaskRuntime } = require('./core/task-runtime');
 const { WorkingMemoryStore } = require('./core/working-memory');
 const { MemoryStore } = require('./memory/memory-store');
+const { KnowledgeGraph } = require('./memory/knowledge-graph');
 const { bootstrapLegacyMemory } = require('./memory/legacy-memory-bootstrap');
 const { syncRuntimeSelfKnowledge } = require('./memory/runtime-self-knowledge');
 const { ContextAssembler } = require('./memory/context-assembler');
@@ -78,6 +79,7 @@ function createRuntime(options = {}) {
   const workingMemoryStore = new WorkingMemoryStore();
   const memoryStore = new MemoryStore({ dataDir });
   bootstrapLegacyMemory({ memoryStore });
+  const knowledgeGraph = new KnowledgeGraph({ dataDir });
   const credentialVault = new CredentialVault({ dataDir });
   const presenterRegistry = new PresenterRegistry();
   registerGooglePresenters(presenterRegistry);
@@ -103,6 +105,48 @@ function createRuntime(options = {}) {
     risk: 'medium',
     permissions: ['memory:review'],
     execute: async (input) => memoryStore.updateState(input.id, input.state, input.patch || {})
+  });
+
+  toolRegistry.register({
+    name: 'memory.graph_query',
+    description: 'Consultar el grafo de conocimiento sobre el mundo del usuario (personas, proyectos, lugares, organizaciones y sus hechos/relaciones). Útil para responder "¿qué sabes de X?". Input: { query: "nombre o tema" }. Devuelve los perfiles de entidad relevantes.',
+    risk: 'low',
+    permissions: [],
+    execute: async (input) => {
+      const profiles = knowledgeGraph.retrieveForMessage(String(input.query || ''), { limit: input.limit || 5 });
+      return { query: input.query, found: profiles.length, profiles };
+    }
+  });
+
+  toolRegistry.register({
+    name: 'memory.graph_remember',
+    description: 'Registrar explícitamente en el grafo de conocimiento una entidad y sus hechos cuando el usuario pide recordar algo concreto sobre alguien o algo. Input: { name, type: "person|project|tool|place|concept|event|org", facts: [{ predicate, object }], properties? }. Los hechos quedan verificados (el usuario los afirmó directo).',
+    risk: 'low',
+    permissions: ['memory:write_candidate'],
+    execute: async (input) => {
+      const entity = knowledgeGraph.upsertEntity(input.type || 'concept', input.name, input.properties || {}, 'user_explicit');
+      if (!entity) return { ok: false, error: 'NAME_REQUIRED' };
+      const facts = [];
+      for (const f of Array.isArray(input.facts) ? input.facts : []) {
+        const fact = knowledgeGraph.addFact(entity.id, f.predicate, f.object, { confidence: 1, source: 'user_explicit', state: 'verified' });
+        if (fact) facts.push(fact);
+      }
+      return { ok: true, entity, facts };
+    }
+  });
+
+  toolRegistry.register({
+    name: 'memory.commitments',
+    description: 'Listar o actualizar compromisos del usuario (promesas/tareas con o sin fecha) guardados en el grafo. Input para listar: { status?: "pending|active|completed|failed|cancelled" }. Input para actualizar: { id, status }.',
+    risk: 'low',
+    permissions: [],
+    execute: async (input) => {
+      if (input.id && input.status) {
+        const updated = knowledgeGraph.setCommitmentStatus(input.id, input.status);
+        return updated ? { ok: true, commitment: updated } : { ok: false, error: 'NOT_FOUND' };
+      }
+      return { commitments: knowledgeGraph.findCommitments({ status: input.status }) };
+    }
   });
 
   toolRegistry.register({
@@ -196,7 +240,7 @@ function createRuntime(options = {}) {
 
   syncRuntimeSelfKnowledge({ memoryStore, toolRegistry });
 
-  const contextAssembler = new ContextAssembler({ memoryStore, workingMemoryStore });
+  const contextAssembler = new ContextAssembler({ memoryStore, workingMemoryStore, knowledgeGraph });
 
   // Persona: fábrica (config de Daniel) + overlay opcional de cliente white-label.
   // Sin overlay → perfil idéntico al de siempre. options.persona permite
@@ -212,6 +256,7 @@ function createRuntime(options = {}) {
     memoryStore,
     workingMemoryStore,
     contextAssembler,
+    knowledgeGraph,
     persona
   });
   const agentStore = new AgentStore({ dataDir });
@@ -366,6 +411,7 @@ function createRuntime(options = {}) {
     taskRuntime,
     workingMemoryStore,
     memoryStore,
+    knowledgeGraph,
     credentialVault,
     usageMeter,
     importLegacyCredentials: (importOptions = {}) => importLegacyCredentials({

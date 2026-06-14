@@ -1,6 +1,7 @@
 const { formatHumanReadable } = require('../presenters/human-readable-format');
 const { applyOutputValueContract, inferOutputValue } = require('../presenters/output-value-contract');
 const { learnFromConversationTurn } = require('../memory/memory-learning');
+const { extractGraphFromTurn } = require('../memory/graph-extractor');
 const { renderPersonaPrompt } = require('./persona-core');
 const { detectFeedbackPolarity, selectLessonsInPlay, applyReinforcement } = require('../memory/lesson-reinforcement');
 const { buildQuickAck } = require('./quick-ack');
@@ -700,7 +701,7 @@ function buildCapabilitiesResponse(toolRegistry, memoryStore) {
 }
 
 class ConversationRuntime {
-  constructor({ eventBus, taskRuntime, toolRegistry, modelProvider, presenterRegistry, memoryStore, workingMemoryStore, contextAssembler, persona }) {
+  constructor({ eventBus, taskRuntime, toolRegistry, modelProvider, presenterRegistry, memoryStore, workingMemoryStore, contextAssembler, knowledgeGraph, persona }) {
     this.eventBus = eventBus;
     this.taskRuntime = taskRuntime;
     this.toolRegistry = toolRegistry;
@@ -709,6 +710,7 @@ class ConversationRuntime {
     this.memoryStore = memoryStore;
     this.workingMemoryStore = workingMemoryStore;
     this.contextAssembler = contextAssembler || null;
+    this.knowledgeGraph = knowledgeGraph || null;
     // Perfil de persona resuelto (fábrica + overlay de cliente). Si no se pasa,
     // renderPersonaPrompt cae al perfil de fábrica.
     this.persona = persona || null;
@@ -1475,6 +1477,21 @@ Reglas:
         this._lessonsInPlay = selectLessonsInPlay(this.memoryStore);
       } catch (_) {
         this._lessonsInPlay = [];
+      }
+
+      // 4) Grafo de conocimiento: extrae entidades/hechos/relaciones/compromisos
+      //    del turno y los deposita como candidatos. Modela el mundo del usuario.
+      try {
+        if (this.knowledgeGraph) {
+          await extractGraphFromTurn({
+            userText: text,
+            assistantText: conversationTask.result?.speak || conversationTask.result?.visual || '',
+            modelProvider: this.modelProvider,
+            graph: this.knowledgeGraph
+          });
+        }
+      } catch (_) {
+        // La extracción al grafo nunca debe romper la conversación en vivo.
       }
     });
   }

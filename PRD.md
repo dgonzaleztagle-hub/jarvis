@@ -607,6 +607,13 @@ Formato no es decoración — es parte del contrato de cada respuesta. Reglas ap
 
 ## 11. Roadmap
 
+> **Fusión de conocimiento (3 Jarvis):** plan para incorporar lo mejor de `jarvis-companion`,
+> `@usejarvis/brain` (vierisid) y `Mark-XXXIX` (FatihMakes) — knowledge graph de memoria,
+> daemon+sidecar, agente autónomo y authority engine — en
+> [docs/FUSION_KNOWLEDGE_MERGE.md](../docs/FUSION_KNOWLEDGE_MERGE.md). Reimplementación inspirada
+> (no copia literal) por licencias RSALv2/CC-BY-NC. Secuencia: A) memory graph → B) meta-planner
+> → C) authority+audit → D) agente multi-paso → E) sidecar → F) awareness.
+
 ### Fase 1 — Fundación ✅
 - [x] Event bus, Policy engine, Tool registry, Task runtime
 - [x] Credential vault, Memory store v1
@@ -632,6 +639,7 @@ Formato no es decoración — es parte del contrato de cada respuesta. Reglas ap
 - [x] Persona core con carácter definido ("compañero con criterio") + campo depth
 - [x] Invariantes anti-envenenamiento del aprendizaje (autoridad + procedencia) + identidad arquitectónica en prompt
 - [x] Tier 0 ordenado por confianza+recencia; estado `rejected` excluido del contexto
+- [x] **Grafo de conocimiento** (Fase A de la fusión, `src/memory/knowledge-graph.js`): modela el mundo del usuario (entidades→hechos→relaciones→compromisos) con estados candidate/verified, extracción LLM en background e inyección al contexto. Tools `memory.graph_query/graph_remember/commitments`. Ver [docs/FUSION_KNOWLEDGE_MERGE.md](../docs/FUSION_KNOWLEDGE_MERGE.md)
 - [x] Persona core en 3 capas (`src/conversation/persona-core.js`): identidad editable (overlay de cliente + perillas numéricas con clamp) / piso de producto invariante / aprendido (memoria). Sin overlay, el perfil es idéntico al de Daniel. Pendiente: panel UI de perillas, voz/avatar al config
 - [ ] Memory inspector visual
 - [ ] Eval set de comportamiento: conversaciones de prueba que detecten regresiones del aprendizaje
