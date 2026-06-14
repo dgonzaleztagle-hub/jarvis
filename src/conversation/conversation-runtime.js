@@ -701,7 +701,7 @@ function buildCapabilitiesResponse(toolRegistry, memoryStore) {
 }
 
 class ConversationRuntime {
-  constructor({ eventBus, taskRuntime, toolRegistry, modelProvider, presenterRegistry, memoryStore, workingMemoryStore, contextAssembler, knowledgeGraph, persona }) {
+  constructor({ eventBus, taskRuntime, toolRegistry, modelProvider, presenterRegistry, memoryStore, workingMemoryStore, contextAssembler, knowledgeGraph, getActiveModel, persona }) {
     this.eventBus = eventBus;
     this.taskRuntime = taskRuntime;
     this.toolRegistry = toolRegistry;
@@ -711,6 +711,7 @@ class ConversationRuntime {
     this.workingMemoryStore = workingMemoryStore;
     this.contextAssembler = contextAssembler || null;
     this.knowledgeGraph = knowledgeGraph || null;
+    this.getActiveModel = typeof getActiveModel === 'function' ? getActiveModel : null;
     // Perfil de persona resuelto (fábrica + overlay de cliente). Si no se pasa,
     // renderPersonaPrompt cae al perfil de fábrica.
     this.persona = persona || null;
@@ -800,7 +801,28 @@ AGENTES AUTOMATICOS — discovery antes de crear:
 
 El mensaje del usuario puede venir precedido por un bloque [contexto] con memoria relevante y fecha actual. Úsalo, pero responde solo al mensaje.`;
 
-    return [{ text: stable, cache: true }];
+    const stableWithModel = stable + this.buildModelAwarenessPrompt();
+    return [{ text: stableWithModel, cache: true }];
+  }
+
+  // Conciencia del modelo activo + recomendación honesta y REACTIVA. Va al final
+  // del system: cambia solo al hacer swap de modelo (cache-miss puntual, no por
+  // turno). El upsell es reactivo — nunca se ofrece de oficio (decisión de producto).
+  buildModelAwarenessPrompt() {
+    if (!this.getActiveModel) return '';
+    let active;
+    try { active = this.getActiveModel(); } catch (_) { return ''; }
+    if (!active || !active.id) return '';
+    const isStrong = (active.tierRank || 0) >= 2;
+
+    let block = `\n\nMODELO ACTUAL: estás pensando con "${active.label}" (tier ${active.tier}).`;
+    if (!isStrong) {
+      block += `
+RECOMENDACIÓN HONESTA DE MODELO (solo REACTIVA, nunca de oficio):
+- Si el usuario se queja de la CALIDAD de algo que construiste o produjiste (una página/landing, código, un análisis, un texto elaborado) y tu modelo actual es de tier básico o gratis, sé honesto: explícale en una frase que tu calidad para ESA tarea está limitada por el modelo actual, y recomiéndale activar uno más potente (Claude Sonnet 4.6, el recomendado para construir — capaz de casi todo sin el gasto del tope de línea). Si acepta, puedes cambiarlo con model.set_active.
+- NO ofrezcas esto si el usuario no se quejó, ni para tareas simples (conversar, leer, resumir), ni repetidamente. No es venta: es honestidad cuando de verdad hace falta. Si insiste en seguir con el modelo actual, respétalo y haz lo mejor que puedas.`;
+    }
+    return block;
   }
 
   buildFinalResponsePrompt() {

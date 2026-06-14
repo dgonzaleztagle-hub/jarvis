@@ -117,7 +117,8 @@ function createRuntime(options = {}) {
     const id = getActiveModelId();
     return modelCatalog.getModel(id) || { id, label: id, tier: 'desconocido', tierRank: 0 };
   }
-  function setActiveModel(modelId) {
+  const modelPrefPath = require('path').join(dataDir, 'model-preference.json');
+  function setActiveModel(modelId, { persist = true } = {}) {
     const target = modelCatalog.getModel(modelId);
     if (!target) throw new Error(`MODEL_NOT_IN_CATALOG: ${modelId}`);
     const active = modelCatalog.getModel(getActiveModelId());
@@ -128,8 +129,22 @@ function createRuntime(options = {}) {
       throw new Error('MODEL_SWAP_UNSUPPORTED: el proveedor activo no permite swap en caliente');
     }
     modelProvider.setModel(target.id, target.pricing);
+    // La elección persiste: al reiniciar, Jarvis vuelve al modelo que el usuario
+    // dejó puesto, no al default. Solo dentro del mismo proveedor (el provider lo
+    // fija el arranque/onboarding).
+    if (persist) {
+      try { require('fs').writeFileSync(modelPrefPath, JSON.stringify({ model: target.id }), 'utf-8'); } catch (_) {}
+    }
     return getActiveModel();
   }
+  // Restaurar la preferencia guardada (si es compatible con el proveedor activo).
+  try {
+    const saved = JSON.parse(require('fs').readFileSync(modelPrefPath, 'utf-8'));
+    const pref = saved && modelCatalog.getModel(saved.model);
+    if (pref && pref.provider === modelCatalog.getModel(getActiveModelId())?.provider && pref.id !== getActiveModelId()) {
+      setActiveModel(pref.id, { persist: false });
+    }
+  } catch (_) { /* sin preferencia guardada: queda el default */ }
 
   toolRegistry.register({
     name: 'model.catalog',
@@ -341,6 +356,7 @@ function createRuntime(options = {}) {
     workingMemoryStore,
     contextAssembler,
     knowledgeGraph,
+    getActiveModel,
     persona
   });
   const agentStore = new AgentStore({ dataDir });
