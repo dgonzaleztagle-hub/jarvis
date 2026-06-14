@@ -803,7 +803,11 @@ AGENTES AUTOMATICOS — discovery antes de crear:
 - NUNCA inventes el horario: si el usuario no dio horario ni frecuencia, pregúntale o propón uno explícitamente para que lo confirme.
 - El goal del agente debe ser autosuficiente: se ejecutará sin contexto de esta conversación. Escríbelo con criterios concretos (qué filtrar, qué reportar, qué hacer si no hay novedades).
 
-El mensaje del usuario puede venir precedido por un bloque [contexto] con memoria relevante y fecha actual. Úsalo, pero responde solo al mensaje.`;
+El mensaje del usuario puede venir precedido por un bloque [contexto] con memoria relevante y fecha actual. Úsalo, pero responde solo al mensaje.
+
+ACCIONES PENDIENTES DE CONFIRMACIÓN:
+- Si el contexto incluye "[Acciones pendientes de confirmación]", son acciones (de cualquier herramienta) que quedaron esperando el visto bueno del usuario en turnos previos. Revisa si el mensaje actual confirma, cancela o se refiere a alguna — y resuélvela con tasks.confirm_pending o tasks.cancel_pending usando su "id". No vuelvas a generar esa misma acción desde cero.
+- Si el mensaje es sobre algo nuevo y distinto, ignora ese bloque y procede normal: las acciones pendientes no se cancelan solas.`;
 
     const stableWithModel = stable + this.buildModelAwarenessPrompt();
     return [{ text: stableWithModel, cache: true }];
@@ -912,13 +916,22 @@ Reglas:
         // confirmación para riesgo high (ver policy-engine).
         { ...context, channel, userText: text, userGoAhead: isExplicitGoAhead(text) }
       );
-      // Una sola confirmación viva por tool: si el modelo re-llamó la misma
-      // herramienta (ej: refinó el goal tras feedback) en vez de retomar la
-      // pendiente, la confirmación anterior queda obsoleta — no se apilan
-      // preguntas duplicadas para la misma acción.
+      // Dedup, no "última gana": si el modelo re-emitió EXACTAMENTE la misma
+      // acción (mismo tool + mismos inputs) que ya estaba pendiente, la copia
+      // vieja queda obsoleta — no se apilan dos confirmaciones idénticas.
+      // Una acción pendiente DISTINTA (otro destinatario, otro contenido) NO
+      // se cancela sola: queda visible para el usuario/modelo via el bloque
+      // "Acciones pendientes de confirmación" (ver handleMessage), que es
+      // donde se decide confirmarla, cancelarla o dejarla — no acá a ciegas.
       if (completed.status === 'waiting_confirmation') {
+        const sameInput = JSON.stringify(normalizedInput);
         for (const stale of this.taskRuntime.listTasks()) {
-          if (stale.id !== completed.id && stale.status === 'waiting_confirmation' && stale.toolName === call.toolName) {
+          if (
+            stale.id !== completed.id &&
+            stale.status === 'waiting_confirmation' &&
+            stale.toolName === call.toolName &&
+            JSON.stringify(stale.input || {}) === sameInput
+          ) {
             stale.status = 'superseded';
           }
         }
@@ -1037,19 +1050,25 @@ Reglas:
     return String(out.data?.visual || '').trim();
   }
 
-  findLatestPendingToolTask() {
+  listPendingConfirmations() {
     return this.taskRuntime
       .listTasks()
-      .slice()
-      .reverse()
-      .find((task) => task.status === 'waiting_confirmation' && task.type === 'tool' && task.toolName);
+      .filter((task) => task.status === 'waiting_confirmation' && task.type === 'tool' && task.toolName);
   }
 
   async maybeConfirmPendingTask({ text, conversationTask, channel }) {
     if (!isAffirmativeConfirmation(text)) return null;
 
-    const pending = this.findLatestPendingToolTask();
-    if (!pending) return null;
+    // Atajo determinista solo cuando NO hay ambigüedad posible: con una sola
+    // acción pendiente, "sí/dale/ok" solo puede referirse a ella. Con 2+
+    // pendientes, cuál confirma es ambiguo por definición — no se adivina acá
+    // (esa fue la causa del bug real: "sí" confirmaba la última pendiente, no
+    // necesariamente la que el usuario tenía en mente). Se deja pasar al turno
+    // normal del modelo, que ve el bloque "Acciones pendientes de confirmación"
+    // en el contexto y resuelve con tasks.confirm_pending/cancel_pending.
+    const pendingTasks = this.listPendingConfirmations();
+    if (pendingTasks.length !== 1) return null;
+    const pending = pendingTasks[0];
 
     const completed = await this.taskRuntime.confirmTask(pending.id, { channel });
     const ok = completed.status === 'completed';
@@ -1115,10 +1134,27 @@ Reglas:
       ? ''
       : (this.workingMemoryStore?.buildPromptContext(text, { limit: 3 }) || '');
 
+    // Acciones que quedaron esperando confirmación en turnos anteriores
+    // (de CUALQUIER herramienta, no solo la última). Generalista a propósito:
+    // es el modelo quien decide, viendo el mensaje del usuario, si se refiere
+    // a alguna de estas — y con qué tool (confirm/cancel) — en vez de que el
+    // código adivine por nombre de herramienta o se quede con "la más nueva".
+    const pendingConfirmations = this.listPendingConfirmations();
+    const pendingContext = pendingConfirmations.length > 0
+      ? [
+          '[Acciones pendientes de confirmación]',
+          ...pendingConfirmations.map((task) => {
+            const details = formatConfirmationInput(task.input || {});
+            return `- id: ${task.id} | herramienta: ${task.toolName}${details ? ` | datos: ${details.replace(/\n/g, '; ')}` : ''}`;
+          }),
+          'Si el mensaje del usuario confirma, cancela o se refiere a alguna de estas acciones, usa tasks.confirm_pending o tasks.cancel_pending con el "id" correspondiente — no la repitas ni la redactes de nuevo. Si el mensaje es sobre algo distinto, déjalas como están: no se cancelan solas.'
+        ].join('\n')
+      : '';
+
     // El contexto dinámico viaja en el mensaje actual, no en el system ni en el
     // historial: el system queda estable (cacheable) y el historial guarda el
     // texto crudo del usuario sin arrastrar contextos viejos turno tras turno.
-    const dynamicContext = [memoryContext, workingContext].filter(Boolean).join('\n\n');
+    const dynamicContext = [memoryContext, workingContext, pendingContext].filter(Boolean).join('\n\n');
     const currentUserText = dynamicContext ? `${dynamicContext}\n\n[Mensaje del usuario]\n${text}` : text;
 
     const messages = [

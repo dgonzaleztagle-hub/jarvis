@@ -252,7 +252,7 @@ function createRuntime(options = {}) {
     permissions: [],
     execute: async () => {
       const tasks = taskRuntime.listTasks();
-      const active = tasks.filter(t => !['completed', 'failed'].includes(t.status));
+      const active = tasks.filter(t => !['completed', 'failed', 'cancelled', 'superseded'].includes(t.status));
       const safe = active.map(t => ({
         id: t.id,
         title: t.title,
@@ -261,6 +261,37 @@ function createRuntime(options = {}) {
         createdAt: t.createdAt
       }));
       return { tasks: safe, total: tasks.length, active: safe.length };
+    }
+  });
+
+  toolRegistry.register({
+    name: 'tasks.confirm_pending',
+    description: 'Confirmar y ejecutar una acción que quedó esperando confirmación (cualquier herramienta). Input: { id } — el id viene del bloque "Acciones pendientes de confirmación" en el contexto. Úsalo cuando el usuario confirma esa acción; no vuelvas a generarla desde cero.',
+    risk: 'low',
+    permissions: [],
+    execute: async (input, context) => {
+      const id = String(input.id || '');
+      const task = taskRuntime.getTask(id);
+      if (!task) throw new Error(`PENDING_TASK_NOT_FOUND: ${id}`);
+      if (task.status !== 'waiting_confirmation') throw new Error(`TASK_NOT_PENDING: ${id} (status=${task.status})`);
+      const completed = await taskRuntime.confirmTask(id, context);
+      return { id, status: completed.status, toolName: completed.toolName, result: completed.result, error: completed.error };
+    }
+  });
+
+  toolRegistry.register({
+    name: 'tasks.cancel_pending',
+    description: 'Cancelar (sin ejecutar) una acción que quedó esperando confirmación. Input: { id } — el id viene del bloque "Acciones pendientes de confirmación" en el contexto. Úsalo cuando el usuario descarta esa acción o pide algo distinto.',
+    risk: 'low',
+    permissions: [],
+    execute: async (input) => {
+      const id = String(input.id || '');
+      const task = taskRuntime.getTask(id);
+      if (!task) throw new Error(`PENDING_TASK_NOT_FOUND: ${id}`);
+      if (task.status !== 'waiting_confirmation') throw new Error(`TASK_NOT_PENDING: ${id} (status=${task.status})`);
+      task.status = 'cancelled';
+      taskRuntime.emitTaskEvent(task, 'task_cancelled', { toolName: task.toolName });
+      return { id, status: 'cancelled', toolName: task.toolName };
     }
   });
 
