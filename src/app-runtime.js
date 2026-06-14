@@ -37,6 +37,7 @@ const { registerGooglePresenters } = require('./presenters/google-presenters');
 const { AgentStore } = require('./agents/agent-store');
 const { AgentScheduler } = require('./agents/agent-scheduler');
 const { createAgentTools } = require('./agents/agent-tools');
+const { executeTask } = require('./agents/task-executor');
 const { createVisionTools } = require('./vision/vision-tools');
 
 function createRuntime(options = {}) {
@@ -72,6 +73,15 @@ function createRuntime(options = {}) {
   policyEngine.registerRule(({ tool, context }) => {
     if (context.channel === 'agent' && /^agents\./.test(tool.name)) {
       return { allowed: false, reason: 'Las corridas de agentes no pueden gestionar agentes (anti-recursión).' };
+    }
+    return null;
+  });
+  // Anti-recursión del ejecutor autónomo: una tarea autónoma no puede lanzar
+  // otra tarea autónoma (ni desde una corrida de agente). Evita planes que se
+  // delegan a sí mismos en bucle.
+  policyEngine.registerRule(({ tool, context }) => {
+    if (tool.name === 'tasks.run_autonomous' && (context.inAutonomousTask || context.channel === 'agent')) {
+      return { allowed: false, reason: 'Una tarea autónoma no puede lanzar otra tarea autónoma (anti-recursión).' };
     }
     return null;
   });
@@ -277,6 +287,22 @@ function createRuntime(options = {}) {
   for (const tool of createAgentTools({ store: agentStore, scheduler: agentScheduler })) {
     toolRegistry.register(tool);
   }
+
+  // Ejecutor autónomo multi-paso: para tareas que exceden el tool loop corto.
+  // Planifica, ejecuta paso a paso con auto-fix, y se detiene ante acciones que
+  // requieren aprobación (la autonomía tiene techo, ver policy + audit).
+  toolRegistry.register({
+    name: 'tasks.run_autonomous',
+    description: 'Ejecutar una tarea COMPLEJA de varios pasos de forma autónoma: planifica el objetivo en pasos, los corre encadenando resultados y se auto-repara una vez si un paso falla. Úsala solo cuando la tarea claramente excede lo que puedes resolver en una o dos herramientas directas (ej: "investiga X, resume y guárdalo en un doc"). Input: { goal: "objetivo en lenguaje natural" }. Se detiene si un paso necesita tu aprobación.',
+    risk: 'medium',
+    permissions: ['tasks:autonomous'],
+    execute: async (input, context = {}) => executeTask({
+      goal: String(input.goal || ''),
+      modelProvider,
+      toolRegistry,
+      channel: context.channel || 'hud'
+    })
+  });
   if (options.agents?.autoStart !== false) agentScheduler.start();
 
   toolRegistry.register({

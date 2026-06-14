@@ -658,6 +658,7 @@ Formato no es decoración — es parte del contrato de cada respuesta. Reglas ap
 - [x] Fábrica de recetas: store + scheduler + discovery + confirmación + panel HUD
 - [x] Notificación de corridas programadas (voz HUD + Telegram)
 - [x] Invariante anti-recursión (corridas no gestionan agentes) + go-ahead conversacional cuenta como confirmación (risk high) + confirmaciones duplicadas se reemplazan
+- [x] **Ejecutor autónomo multi-paso** (Fase D de la fusión, `src/agents/task-executor.js`): tool `tasks.run_autonomous` que planifica una tarea compleja en pasos, los ejecuta encadenando resultados con auto-fix (1 reintento), y se detiene ante pasos de alto riesgo (`needs_approval`). Anti-recursión por policy. Respeta audit + policy en cada paso. Ver [docs/FUSION_KNOWLEDGE_MERGE.md](../docs/FUSION_KNOWLEDGE_MERGE.md)
 - [ ] Presupuesto en $ por agente/día con corte automático, namespace de memoria por agente
 - [ ] Skill registry con lifecycle completo, procedural memory
 - [ ] Ruteo de modelos por tipo de tarea (barato conversa, fuerte construye)

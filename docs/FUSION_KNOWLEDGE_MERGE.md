@@ -45,7 +45,7 @@ reemplazar nada.
 
 ## Secuencia de implementación (ordenada por dependencias y riesgo)
 
-> Estado: **A hecha** · **B descartada (redundante)** · **C audit hecho** (resto de C, D, E, F pendientes).
+> Estado: **A hecha** · **B descartada (redundante)** · **C audit hecho** · **D hecha** (resto de C, y E, F pendientes).
 
 ### Fase A — Memory Knowledge Graph ✅ IMPLEMENTADA (2026-06-14)
 Reimplementación propia de la idea (no copia) en `src/memory/knowledge-graph.js` +
@@ -84,11 +84,23 @@ auto-aprobación. Tests en `test/audit-trail.test.js` (5). Validado E2E.
 **Pendiente de C:** aprobaciones multi-canal (Telegram/Discord) y el aprendizaje de reglas de
 auto-aprobación por repetición (sugerir auto-aprobado tras N aprobaciones seguidas).
 
-### Fase D — Agente autónomo multi-paso *(sobre la plataforma de agentes existente)*
-Reimplementar de mark-xxxix: trío `planner → executor → error_handler`. Planifica en pasos,
-ejecuta uno a uno inyectando contexto entre pasos, y si algo falla, analiza el error y genera el
-parche (auto-fix) antes de reintentar. Encaja con el scheduler/recetas que ya existen y conecta
-con la validación-al-crear de `agents.create` ya implementada.
+### Fase D — Agente autónomo multi-paso ✅ IMPLEMENTADA (2026-06-14)
+Reimplementación propia de la idea de mark-xxxix (planner→executor→error-handler) en
+`src/agents/task-executor.js`, adaptada a la gobernanza de codex:
+- **Planifica** el objetivo en pasos (1 llamado LLM) usando solo tools reales del registry.
+- **Ejecuta** paso a paso vía `toolRegistry.execute` (respeta policy + audit), encadenando los
+  resultados al contexto del auto-fix.
+- **Auto-fix:** ante un error real, un llamado LLM propone input corregido o tool alternativa y
+  reintenta UNA vez (no loops infinitos).
+- **Techo de autonomía:** un paso de alto riesgo NO se auto-confirma — se marca `needs_approval`
+  y el ejecutor se detiene (`paused_for_approval`). Coherente con Fase C.
+- **Anti-recursión:** policy rule bloquea que una tarea autónoma lance otra (o desde channel agent).
+- Devuelve datos estructurados (sin resumen LLM extra); el tool loop existente los presenta.
+- Tool `tasks.run_autonomous` (el modelo la invoca para tareas complejas). Tests en
+  `test/task-executor.test.js` (6). Validado E2E: el modelo la usó para una tarea de clima+nota,
+  planificó y ejecutó `web.fetch` reales, y reportó honestamente la limitación sin alucinar.
+**Nota:** reemplaza la idea del `replan` de mark-xxxix por un auto-fix por paso + parada gobernada,
+más simple y seguro que re-planificar el objetivo completo en bucle.
 
 ### Fase E — Manos remotas: daemon + sidecar *(la más grande; requiere C lista)*
 Reimplementar de inv/jarvis: arquitectura daemon-central + sidecar liviano que se conecta por
