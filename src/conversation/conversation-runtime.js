@@ -792,6 +792,10 @@ CONTENIDO HTML / PÁGINAS / LANDINGS:
 - Si el usuario te pide crear una página, landing, sitio, maqueta web o algo visual en HTML, usa la herramienta preview.render_html. NO escribas tú el HTML: pásale un "brief" corto en lenguaje natural (qué página, para quién, secciones, tono) en input { brief, title }. La herramienta genera el HTML y lo muestra en el HUD. Nunca pongas HTML en "speak" ni en "visual".
 - En "speak" confirma en una frase natural lo que armaste ("Te dejé una primera versión de la landing en pantalla, dime si la afinamos"). Nunca leas etiquetas ni código por voz.
 
+DOCUMENTOS LARGOS (Google Docs):
+- Si el usuario pide crear un documento/informe/reporte cuyo contenido tienes que redactar tú (no algo que él dictó literal), usa google.docs.create_document con { title, brief }. NO escribas tú el contenido completo en "content": pásale un "brief" corto (de qué trata, secciones, tono) y la herramienta redacta el documento por dentro.
+- Solo usa "content" cuando el usuario te dio el texto exacto que quiere en el documento (dictado literal).
+
 AGENTES AUTOMATICOS — discovery antes de crear:
 - Antes de llamar agents.create, REVISA tu catálogo de herramientas completo y evalúa si alguna combinación cumple la misión. Ejemplo: "vigilar el precio del dólar" SÍ es viable porque web.fetch puede leer páginas públicas con ese dato. No descartes una misión sin haber repasado el catálogo.
 - Si tras revisar el catálogo de verdad falta una capacidad, NO crees el agente: dilo honestamente Y sugiere qué se necesitaría (qué conector, acceso o API) para hacerlo posible. El usuario decide si vale la pena agregarlo.
@@ -1242,9 +1246,19 @@ Reglas:
     let currentToolCalls = toolCalls;
     // Track whether any tool produced a visual panel (list of emails, calendar events, etc.)
     // so the closing prompt can instruct the model to skip the summary in chat.
-    // Tools that write content to external destinations — the model needs room
-    // to compose the full payload (document body, email content, etc.)
-    const CONTENT_OUTPUT_TOOLS = /google\.(docs\.|sheets\.|gmail\.send|gmail\.create_draft)/;
+    //
+    // REGLA — contenido largo generado por el modelo (toda tool nueva que lo
+    // necesite debe seguir esto, NO agregarse acá):
+    // El presupuesto de tokens de la decisión/continuación (450-4000) es para
+    // la DECISIÓN, no para prosa larga. Si una tool produce contenido extenso
+    // (HTML, documentos, reportes), la tool recibe un BRIEF corto y genera el
+    // contenido POR DENTRO con su propio modelProvider.generateText({maxTokens:
+    // 6000+}) — ver preview.render_html y google.docs.create_document. Subir
+    // este techo es el parche rechazado: nunca alcanza para todo y mezcla
+    // generación de contenido con la decisión de qué tools llamar.
+    // gmail.send/create_draft y sheets.write_range quedan acá porque sus
+    // cuerpos (emails, filas de datos) entran cómodo en 4000 tokens.
+    const CONTENT_OUTPUT_TOOLS = /google\.(sheets\.|gmail\.send|gmail\.create_draft)/;
 
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
       if (currentToolCalls.length === 0) break;

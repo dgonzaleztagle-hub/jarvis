@@ -283,7 +283,7 @@ function createRuntime(options = {}) {
     toolRegistry.register(tool);
   }
 
-  for (const tool of createGoogleDocsTools({ authFactory: googleAuthFactory })) {
+  for (const tool of createGoogleDocsTools({ authFactory: googleAuthFactory, modelProvider })) {
     toolRegistry.register(tool);
   }
 
