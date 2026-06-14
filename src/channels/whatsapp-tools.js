@@ -1,28 +1,13 @@
 // Tools wa.* sobre el canal WhatsApp personal.
 //
-// Contrato de envío (procedencia del contenido, enforced en policy-engine):
+// Contrato de envío (procedencia del contenido, generalizado en policy-engine
+// vía tool.outbound + classifyProvenance — ver src/core/provenance.js):
 // - Dictado literal — el texto del mensaje aparece en lo que el usuario dijo
 //   ("dile a Rosie que diga te amo") → se envía directo, sin fricción.
 // - Contenido compuesto — el texto lo redactó el modelo (resúmenes, borradores)
 //   → confirmación obligatoria mostrando el borrador completo.
-// La distinción la verifica isLiteralDictation en código; no depende de que
-// el modelo se autodeclare.
-
-function normalizeForDictation(value) {
-  return String(value || '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/\p{M}/gu, '')
-    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function isLiteralDictation(message, userText) {
-  const m = normalizeForDictation(message);
-  const u = normalizeForDictation(userText);
-  return m.length > 0 && u.includes(m);
-}
+// La decisión de confirmar vive en el policy-engine (no depende de que el
+// modelo se autodeclare) — ver classifyProvenance en src/core/provenance.js.
 
 function createWhatsAppTools({ channel }) {
   return [
@@ -65,7 +50,11 @@ function createWhatsAppTools({ channel }) {
     {
       name: 'wa.send_message',
       description: 'Enviar un mensaje de WhatsApp desde la cuenta personal del usuario. Input: { to (nombre de contacto/chat reciente o número con código de país), message (texto EXACTO a enviar) }. Si el usuario dictó el texto literal, se envía directo; si el texto lo redactaste tú, el runtime pedirá confirmación mostrando el borrador.',
-      risk: 'medium',
+      // risk 'high' (igual que gmail.send_email): por defecto confirma, y la
+      // procedencia (policy-engine, outbound) relaja SOLO si el contenido fue
+      // dictado literal. Esto reemplaza la regla ad-hoc isLiteralDictation que
+      // vivía en app-runtime — un solo mecanismo para todo lo outbound.
+      risk: 'high',
       outbound: true,
       permissions: ['whatsapp:send'],
       execute: async (input) => channel.sendMessage(input.to, input.message)
@@ -73,4 +62,4 @@ function createWhatsAppTools({ channel }) {
   ];
 }
 
-module.exports = { createWhatsAppTools, isLiteralDictation, normalizeForDictation };
+module.exports = { createWhatsAppTools };

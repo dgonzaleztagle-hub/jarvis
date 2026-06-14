@@ -2,29 +2,17 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { PolicyEngine } = require('../src/core/policy-engine');
 const { ToolRegistry } = require('../src/core/tool-registry');
-const { isLiteralDictation } = require('../src/channels/whatsapp-tools');
 const { toJid, extractText } = require('../src/channels/whatsapp-channel');
 
-test('isLiteralDictation: dictado literal pasa, compuesto no', () => {
-  assert.equal(isLiteralDictation('te amo', 'envía un mensaje a Rosie y que diga te amo'), true);
-  assert.equal(isLiteralDictation('Té amo!', 'que diga te amo'), true);
-  assert.equal(isLiteralDictation('Hola don Patricio, le resumo lo construido', 'envía un resumen a don Patricio'), false);
-  assert.equal(isLiteralDictation('te amo', ''), false);
-  assert.equal(isLiteralDictation('', 'di algo'), false);
-});
-
-test('policy: wa.send_message compuesto exige confirmación, literal no', async () => {
-  const policyEngine = new PolicyEngine();
-  policyEngine.registerRule(({ tool, input, context }) => {
-    if (tool.name !== 'wa.send_message') return null;
-    if (isLiteralDictation(input.message, context.userText)) return null;
-    return { requiresConfirmation: true, reason: 'compuesto' };
-  });
-  const registry = new ToolRegistry({ policyEngine, eventBus: { emit() {} } });
+test('policy real (outbound + procedencia): wa.send_message compuesto exige confirmación, literal no', async () => {
+  // Sin reglas ad-hoc: el mecanismo genérico outbound+provenance del
+  // policy-engine (mismo que rige gmail.send_email) es el único que decide.
+  const registry = new ToolRegistry({ policyEngine: new PolicyEngine(), eventBus: { emit() {} } });
   const sent = [];
   registry.register({
     name: 'wa.send_message',
-    risk: 'medium',
+    risk: 'high',
+    outbound: true,
     execute: async (input) => { sent.push(input); return { sent: true }; }
   });
 
@@ -49,7 +37,8 @@ test('policy: wa.send_message compuesto exige confirmación, literal no', async 
   assert.equal(confirmed.ok, true);
   assert.equal(sent.length, 2);
 
-  // Sin userText (ej: agente programado): siempre confirma
+  // Sin userText (ej: agente programado): sin procedencia conocida, manda el
+  // riesgo por defecto — 'high' confirma.
   const agentTriggered = await registry.execute('wa.send_message',
     { to: 'Rosie', message: 'hola' }, {});
   assert.equal(agentTriggered.confirmationRequired, true);

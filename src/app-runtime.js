@@ -29,7 +29,7 @@ const { createVoiceTools } = require('./voice/voice-tools');
 const { createEdgeTTSProvider } = require('./voice/edge-tts-provider');
 const { TelegramChannel } = require('./channels/telegram-channel');
 const { WhatsAppChannel } = require('./channels/whatsapp-channel');
-const { createWhatsAppTools, isLiteralDictation } = require('./channels/whatsapp-tools');
+const { createWhatsAppTools } = require('./channels/whatsapp-tools');
 const { createResearchTools } = require('./research/source-quality');
 const { createWebFetchTools } = require('./connectors/web-fetch');
 const { createDesktopTools } = require('./connectors/desktop-control');
@@ -56,18 +56,6 @@ function createRuntime(options = {}) {
       return { requiresConfirmation: true, reason: 'Sobrescribir un rango puede pisar datos existentes de la planilla.' };
     }
     return null;
-  });
-  // WhatsApp: el riesgo no está en la tool sino en la PROCEDENCIA del texto.
-  // Dictado literal (el mensaje aparece en lo que el usuario dijo) → directo.
-  // Contenido compuesto por el modelo → borrador + confirmación, aunque el
-  // modelo afirme lo contrario. Invariante en código, no en prompt.
-  policyEngine.registerRule(({ tool, input, context }) => {
-    if (tool.name !== 'wa.send_message') return null;
-    if (isLiteralDictation(input.message, context.userText)) return null;
-    return {
-      requiresConfirmation: true,
-      reason: 'El texto del mensaje no fue dictado literalmente por el usuario: revisar el borrador antes de enviar.'
-    };
   });
   // Invariante anti-recursión: un agente corriendo (channel 'agent') no puede
   // crear, modificar ni borrar agentes. Sin esto, un goal redactado como

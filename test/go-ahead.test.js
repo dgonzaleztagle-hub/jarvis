@@ -2,20 +2,16 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { PolicyEngine } = require('../src/core/policy-engine');
 const { ToolRegistry } = require('../src/core/tool-registry');
-const { isLiteralDictation } = require('../src/channels/whatsapp-tools');
 
 function makeRegistry() {
+  // Sin reglas ad-hoc para WhatsApp: el mecanismo genérico outbound+provenance
+  // del policy-engine (src/core/policy-engine.js) es el que rige, igual que
+  // para gmail.send_email.
   const policyEngine = new PolicyEngine();
-  // Misma regla de procedencia que registra app-runtime para WhatsApp
-  policyEngine.registerRule(({ tool, input, context }) => {
-    if (tool.name !== 'wa.send_message') return null;
-    if (isLiteralDictation(input.message, context.userText)) return null;
-    return { requiresConfirmation: true, reason: 'compuesto' };
-  });
   const registry = new ToolRegistry({ policyEngine, eventBus: { emit() {} } });
   registry.register({ name: 'agents.create', risk: 'high', execute: async () => ({ created: true }) });
   registry.register({ name: 'danger.critical', risk: 'critical', execute: async () => ({ done: true }) });
-  registry.register({ name: 'wa.send_message', risk: 'medium', execute: async () => ({ sent: true }) });
+  registry.register({ name: 'wa.send_message', risk: 'high', outbound: true, execute: async () => ({ sent: true }) });
   return registry;
 }
 
