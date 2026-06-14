@@ -1,4 +1,5 @@
 const { normalizeInput, validateRequired } = require('./input-normalizer');
+const { classifyProvenance } = require('./provenance');
 
 class ToolRegistry {
   constructor({ policyEngine, eventBus, auditTrail }) {
@@ -74,9 +75,16 @@ class ToolRegistry {
       return { ok: false, blocked: true, policy };
     }
 
+    // Telemetría de procedencia (no cambia la confirmación, solo observa): ¿el
+    // contenido lo dictó el usuario o lo compuso el LLM? Solo si hay texto del
+    // usuario en contexto. Ver src/core/provenance.js.
+    const provenance = context.userText
+      ? classifyProvenance({ input: normalizedInput, userText: context.userText }).provenance
+      : null;
+
     if (policy.requiresConfirmation && !context.confirmed) {
       this.eventBus?.emit('tool_confirmation_required', { name, input: normalizedInput, policy });
-      this.audit({ tool: name, risk: policy.risk, outcome: 'confirmation_required', channel: context.channel, input: normalizedInput, requiresConfirmation: true });
+      this.audit({ tool: name, risk: policy.risk, outcome: 'confirmation_required', channel: context.channel, input: normalizedInput, requiresConfirmation: true, provenance });
       return { ok: false, confirmationRequired: true, policy };
     }
 
@@ -84,7 +92,7 @@ class ToolRegistry {
     try {
       const output = await tool.execute(normalizedInput, context);
       this.eventBus?.emit('tool_completed', { name });
-      this.audit({ tool: name, risk: policy.risk, outcome: 'ok', channel: context.channel, input: normalizedInput });
+      this.audit({ tool: name, risk: policy.risk, outcome: 'ok', channel: context.channel, input: normalizedInput, provenance });
       return { ok: true, output, policy };
     } catch (error) {
       this.eventBus?.emit('tool_failed', { name, error: error.message });

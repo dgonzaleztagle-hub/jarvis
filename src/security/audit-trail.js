@@ -34,13 +34,17 @@ class AuditTrail {
   }
 
   // outcome: 'ok' | 'error' | 'denied' | 'confirmation_required' | 'invalid_input'
-  record({ tool, risk, outcome, channel, input, error, requiresConfirmation } = {}) {
+  // provenance (opcional, telemetría): 'user_defined' | 'llm_composed' | 'no_content'
+  //   — registra si el contenido lo dictó el usuario o lo compuso el LLM. Hoy es
+  //   solo observación; no cambia qué se confirma (ver src/core/provenance.js).
+  record({ tool, risk, outcome, channel, input, error, requiresConfirmation, provenance } = {}) {
     const entry = {
       tool: tool || 'unknown',
       risk: risk || 'low',
       outcome: outcome || 'ok',
       channel: channel || 'unknown',
       requiresConfirmation: !!requiresConfirmation,
+      provenance: provenance || null,
       input: input === undefined ? null : compactInput(input),
       error: error || null,
       at: new Date().toISOString()
