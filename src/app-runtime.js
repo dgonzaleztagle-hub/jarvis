@@ -432,6 +432,26 @@ function createRuntime(options = {}) {
     }
   });
 
+  toolRegistry.register({
+    name: 'preview.render_html',
+    description: 'Renderizar una página HTML (landing, maqueta, sitio, cualquier documento web) en el HUD del usuario: aparece en un panel de vista previa con opción de abrirla en grande en el navegador. Úsalo cuando GENERES HTML que el usuario deba VER. Input: { html: "documento HTML completo (con sus estilos inline o <style>)", title: "nombre legible opcional" }.',
+    risk: 'low',
+    permissions: [],
+    execute: async (input) => {
+      const fs = require('fs');
+      const path = require('path');
+      const html = String(input.html || '');
+      if (!html.trim()) return { ok: false, error: 'HTML_REQUIRED' };
+      const previewsDir = path.join(dataDir, 'previews');
+      fs.mkdirSync(previewsDir, { recursive: true });
+      const fileName = `preview_${Date.now()}_${Math.random().toString(16).slice(2, 8)}.html`;
+      fs.writeFileSync(path.join(previewsDir, fileName), html, 'utf-8');
+      const payload = { url: `/preview/${fileName}`, title: String(input.title || 'Vista previa') };
+      eventBus.emit('hud_show_preview', payload);
+      return { ok: true, ...payload };
+    }
+  });
+
   // Visión genérica: lee imágenes del inbox (boletas, documentos, fotos) con el
   // modelo si soporta multimodal (Anthropic hoy). Pieza genérica — Jarvis decide
   // cómo combinarla con Sheets/Docs/memoria según lo que pida el usuario.

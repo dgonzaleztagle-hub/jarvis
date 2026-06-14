@@ -106,6 +106,23 @@ async function router(req, res) {
       return;
     }
 
+    // Vista previa de HTML generado por Jarvis (landings, maquetas). Dir aparte
+    // del inbox porque acá SÍ se sirve text/html para que el navegador/iframe
+    // lo renderice. El iframe del HUD va sandboxed (aislado), ver preview-panel.js.
+    if (req.method === 'GET' && url.pathname.startsWith('/preview/')) {
+      const previewsDir = path.resolve(runtime.dataDir, 'previews');
+      const requestedPath = decodeURIComponent(url.pathname.replace(/^\/preview\//, ''));
+      const filePath = path.resolve(previewsDir, requestedPath);
+      const relative = path.relative(previewsDir, filePath);
+      if (relative.startsWith('..') || path.isAbsolute(relative) || !fs.existsSync(filePath) || path.extname(filePath).toLowerCase() !== '.html') {
+        return sendJson(res, 404, { error: 'not_found' });
+      }
+      const content = fs.readFileSync(filePath);
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Length': content.length, 'Cache-Control': 'no-cache' });
+      res.end(content);
+      return;
+    }
+
     if (req.method === 'GET' && url.pathname === '/events/stream') {
       res.writeHead(200, {
         'Content-Type': 'text/event-stream; charset=utf-8',

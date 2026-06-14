@@ -11,6 +11,7 @@ import {
 } from './modules/voice.js';
 import { addMessage, showTyping, hideTyping, buildDisplay, appendDeferredContent } from './modules/feed.js';
 import { onHudShowFile } from './modules/inbox-viewer.js';
+import { onHudShowPreview } from './modules/preview-panel.js';
 import { onHudOpenUrl } from './modules/open-url.js';
 import { renderTasks, renderEvents, loadTasks, announceTaskClosure, findPendingToolResult, confirmPendingTask } from './modules/tasks.js';
 import {
@@ -296,6 +297,7 @@ async function boot() {
   }
   stream.addEventListener('conversation_content', onConversationContent);
   stream.addEventListener('hud_show_file', onHudShowFile);
+  stream.addEventListener('hud_show_preview', onHudShowPreview);
   stream.addEventListener('hud_open_url', onHudOpenUrl);
   stream.addEventListener('hud_quick_ack', (evt) => {
     try { speakText(JSON.parse(evt.data).payload?.text || ''); } catch (_) {}
