@@ -154,6 +154,18 @@ async function router(req, res) {
       return sendJson(res, 200, { tools: runtime.toolRegistry.list() });
     }
 
+    if (req.method === 'GET' && url.pathname === '/audit') {
+      const limit = Number(url.searchParams.get('limit') || 100);
+      return sendJson(res, 200, {
+        entries: runtime.auditTrail.query({
+          limit,
+          tool: url.searchParams.get('tool') || undefined,
+          outcome: url.searchParams.get('outcome') || undefined
+        }),
+        stats: runtime.auditTrail.stats()
+      });
+    }
+
     if (req.method === 'GET' && url.pathname === '/calendar/today') {
       const now = new Date();
       const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);

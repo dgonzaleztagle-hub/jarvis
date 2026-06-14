@@ -45,6 +45,8 @@ reemplazar nada.
 
 ## Secuencia de implementación (ordenada por dependencias y riesgo)
 
+> Estado: **A hecha** · **B descartada (redundante)** · **C audit hecho** (resto de C, D, E, F pendientes).
+
 ### Fase A — Memory Knowledge Graph ✅ IMPLEMENTADA (2026-06-14)
 Reimplementación propia de la idea (no copia) en `src/memory/knowledge-graph.js` +
 `src/memory/graph-extractor.js`. Persistencia JSON atómica en `local_data/memory/graph.json`.
@@ -63,15 +65,24 @@ Reimplementación propia de la idea (no copia) en `src/memory/knowledge-graph.js
 - **Tests:** `test/knowledge-graph.test.js` (9 casos). Validado E2E: un mensaje sobre Vikram/Rishtedar
   llenó el grafo por ambos caminos (tool + extractor) sin duplicar, con refuerzo y estados correctos.
 
-### Fase B — Meta-planner Fase 0 *(barato, de companion, mejora todo)*
-Copiar/adaptar de companion: antes de actuar, un primer paso decide si la orden requiere datos
-reales (web/archivos/correos), detecta brechas cognitivas (falta hora, falta lenguaje) y genera
-directivas de calidad. Es código propio → copia directa, adaptada al pipeline de codex.
+### Fase B — Meta-planner Fase 0 ❌ DESCARTADA (redundante en codex)
+Al bajar al código se confirmó que el meta-planner de companion resolvía un problema que codex
+ya tiene resuelto mejor: el system prompt ya instruye preguntar ante datos faltantes / no inventar
+("Si faltan datos obligatorios, pregunta solo por los datos faltantes"; "Antes de agents.create
+REVISA tu catálogo"), y el **tool loop de 3 rondas** ya busca datos reales antes de responder —
+justo lo que el pre-pase de companion forzaba por tener arquitectura de "una acción JSON". Copiarlo
+sería un llamado LLM extra por turno que duplica el tool loop y rompe el cache del system prompt y
+la latencia (crítica). No se implementa.
 
 ### Fase C — Authority Engine + audit trail *(gobernanza ANTES de dar manos)*
-Reimplementar de inv/jarvis sobre el `policy-engine` existente: audit trail completo de toda
-ejecución de tool, aprobaciones multi-canal (chat/Telegram), y aprendizaje de reglas de
-auto-aprobación por repetición. Va antes de las Fases D/E porque esas dan capacidades peligrosas.
+**Audit trail ✅ IMPLEMENTADO (2026-06-14)** — `src/security/audit-trail.js`. Registro auditable
+en `local_data/logs/audit.jsonl` de TODA ejecución de tool (herramienta, riesgo, decisión de
+política, resultado ok/error/denied/confirmation_required, canal, input redactado+truncado),
+enganchado en el punto único `tool-registry.execute`. Tool `audit.query` ("¿qué hiciste hoy?") +
+endpoint `GET /audit`. `consecutiveApprovals()` deja la semilla para el aprendizaje de
+auto-aprobación. Tests en `test/audit-trail.test.js` (5). Validado E2E.
+**Pendiente de C:** aprobaciones multi-canal (Telegram/Discord) y el aprendizaje de reglas de
+auto-aprobación por repetición (sugerir auto-aprobado tras N aprobaciones seguidas).
 
 ### Fase D — Agente autónomo multi-paso *(sobre la plataforma de agentes existente)*
 Reimplementar de mark-xxxix: trío `planner → executor → error_handler`. Planifica en pasos,

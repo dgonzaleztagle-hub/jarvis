@@ -480,6 +480,15 @@ Nota de voz entrante → STT (Gemini multimodal, usa la GEMINI_API_KEY existente
 | Acción irreversible | Confirmar + trazabilidad |
 | Acción financiera/legal/médica | Confirmar + revisión humana |
 
+### Audit Trail (implementado)
+
+`src/security/audit-trail.js` registra TODA ejecución de herramienta en `local_data/logs/audit.jsonl`,
+enganchado en el punto único `tool-registry.execute`: herramienta, riesgo, decisión de política
+(ok/error/denied/confirmation_required), canal, input redactado y truncado, timestamp. Consultable
+por la tool `audit.query` ("¿qué hiciste en mi nombre?") y el endpoint `GET /audit`. Base de la
+gobernanza visible del PRD §2. Pendiente: aprendizaje de auto-aprobación por repetición
+(`consecutiveApprovals` ya deja la semilla). Ver [docs/FUSION_KNOWLEDGE_MERGE.md](../docs/FUSION_KNOWLEDGE_MERGE.md).
+
 ### Presupuestos de Rendimiento y Costo
 
 **SLOs de latencia (medibles en `/model/usage` → `latency` por propósito):**

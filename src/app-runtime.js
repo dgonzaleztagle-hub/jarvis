@@ -11,6 +11,7 @@ const { bootstrapLegacyMemory } = require('./memory/legacy-memory-bootstrap');
 const { syncRuntimeSelfKnowledge } = require('./memory/runtime-self-knowledge');
 const { ContextAssembler } = require('./memory/context-assembler');
 const { CredentialVault } = require('./security/credential-vault');
+const { AuditTrail } = require('./security/audit-trail');
 const { importLegacyCredentials } = require('./security/legacy-credential-importer');
 const { createGoogleAuthFactory } = require('./connectors/google-auth');
 const { createGoogleCalendarTools } = require('./connectors/google-calendar');
@@ -74,7 +75,8 @@ function createRuntime(options = {}) {
     }
     return null;
   });
-  const toolRegistry = new ToolRegistry({ policyEngine, eventBus });
+  const auditTrail = new AuditTrail({ dataDir });
+  const toolRegistry = new ToolRegistry({ policyEngine, eventBus, auditTrail });
   const taskRuntime = new TaskRuntime({ eventBus, toolRegistry });
   const workingMemoryStore = new WorkingMemoryStore();
   const memoryStore = new MemoryStore({ dataDir });
@@ -133,6 +135,17 @@ function createRuntime(options = {}) {
       }
       return { ok: true, entity, facts };
     }
+  });
+
+  toolRegistry.register({
+    name: 'audit.query',
+    description: 'Consultar el registro de auditoría de acciones que Jarvis ejecutó en nombre del usuario (qué herramienta, riesgo, resultado, canal). Útil para "¿qué hiciste hoy?" o "¿qué acciones de riesgo corriste?". Input opcional: { tool, outcome: "ok|error|denied|confirmation_required", since: ISO, limit }.',
+    risk: 'low',
+    permissions: [],
+    execute: async (input) => ({
+      entries: auditTrail.query(input || {}),
+      stats: auditTrail.stats()
+    })
   });
 
   toolRegistry.register({
@@ -413,6 +426,7 @@ function createRuntime(options = {}) {
     memoryStore,
     knowledgeGraph,
     credentialVault,
+    auditTrail,
     usageMeter,
     importLegacyCredentials: (importOptions = {}) => importLegacyCredentials({
       vault: credentialVault,
