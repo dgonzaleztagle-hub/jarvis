@@ -302,6 +302,76 @@ async function boot() {
   stream.addEventListener('hud_quick_ack', (evt) => {
     try { speakText(JSON.parse(evt.data).payload?.text || ''); } catch (_) {}
   });
+  stream.addEventListener('conversation_history_compressed', (evt) => {
+    try {
+      const { message } = JSON.parse(evt.data).payload || {};
+      FloatingPanel.toast({
+        id: 'history-compressed-toast',
+        title: 'Historial comprimido',
+        content: message || 'Resumí la conversación para mantener fluidez.',
+        ms: 8000
+      });
+    } catch (_) {}
+  });
+
+  // Eventos de reunión
+  stream.addEventListener('meeting_started', async (evt) => {
+    try {
+      const { title } = JSON.parse(evt.data);
+      const { meetingPanelState, renderMeeting } = await import('./modules/artifacts.js');
+      const { startRecording } = await import('./modules/meeting-recorder.js');
+      meetingPanelState.active = true;
+      meetingPanelState.title = title;
+      meetingPanelState.chunks = [];
+      meetingPanelState.minutes = null;
+      meetingPanelState.docUrl = null;
+      FloatingPanel.open('meeting', {
+        title: `🎙  ${title}`,
+        content: '<div style="padding:12px;color:#4a5568;font-style:italic;">Iniciando…</div>',
+        zone: 'right', width: '400px'
+      });
+      const container = document.createElement('div');
+      renderMeeting({ title, chunks: [] }, container);
+      FloatingPanel.open('meeting', { title: `🎙  ${title}`, contentNode: container, zone: 'right', width: '400px' });
+      await startRecording();
+    } catch (err) { console.error('[meeting] start error', err); }
+  });
+
+  stream.addEventListener('meeting_transcript_update', async (evt) => {
+    try {
+      const { chunk } = JSON.parse(evt.data);
+      const { meetingPanelState, appendChunkToPanel } = await import('./modules/artifacts.js');
+      meetingPanelState.chunks.push(chunk);
+      appendChunkToPanel(chunk);
+    } catch (_) {}
+  });
+
+  stream.addEventListener('meeting_stopped', async () => {
+    try {
+      const { stopRecording } = await import('./modules/meeting-recorder.js');
+      stopRecording();
+    } catch (_) {}
+  });
+
+  stream.addEventListener('meeting_minutes_ready', async (evt) => {
+    try {
+      const { minutes, title } = JSON.parse(evt.data);
+      const { meetingPanelState, renderMeeting } = await import('./modules/artifacts.js');
+      meetingPanelState.active = false;
+      meetingPanelState.minutes = minutes;
+      const container = document.createElement('div');
+      renderMeeting({ minutes, docUrl: meetingPanelState.docUrl }, container);
+      FloatingPanel.open('meeting', { title: `🎙  ${title} — Minuta`, contentNode: container, zone: 'right', width: '400px' });
+    } catch (_) {}
+  });
+
+  stream.addEventListener('meeting_doc_created', async (evt) => {
+    try {
+      const { docUrl } = JSON.parse(evt.data);
+      const { meetingPanelState } = await import('./modules/artifacts.js');
+      meetingPanelState.docUrl = docUrl;
+    } catch (_) {}
+  });
   stream.onerror = () => { dom.eventsPill.className = 'pill'; dom.eventsPill.textContent = 'EVT?'; };
 }
 

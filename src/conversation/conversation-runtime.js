@@ -5,6 +5,7 @@ const { extractGraphFromTurn } = require('../memory/graph-extractor');
 const { renderPersonaPrompt } = require('./persona-core');
 const { detectFeedbackPolarity, selectLessonsInPlay, applyReinforcement } = require('../memory/lesson-reinforcement');
 const { buildQuickAck } = require('./quick-ack');
+const { generateWithContinuation } = require('../model/long-content');
 
 function isAffirmativeConfirmation(text = '') {
   return /^(si|sí|confirmo|confirmar|dale|ok|okay|acepto|envialo|envíalo|procede|hazlo|adelante)$/i.test(String(text).trim());
@@ -35,7 +36,7 @@ function redactValue(key, value) {
 
 function formatConfirmationInput(input = {}) {
   return Object.entries(input)
-    .filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== '')
+    .filter(([key, value]) => !key.startsWith('_') && value !== undefined && value !== null && String(value).trim() !== '')
     .map(([key, value]) => `- ${key}: ${redactValue(key, value)}`)
     .join('\n');
 }
@@ -551,8 +552,6 @@ function enforceSpeakContract(response = {}) {
 }
 
 function responseSeemsIncomplete({ userText = '', response = {}, toolResults = [] } = {}) {
-  if (toolResults.length > 0) return false;
-
   const combined = `${response.speak || ''}\n${response.visual || ''}`.trim();
   if (!combined) return true;
 
@@ -701,7 +700,7 @@ function buildCapabilitiesResponse(toolRegistry, memoryStore) {
 }
 
 class ConversationRuntime {
-  constructor({ eventBus, taskRuntime, toolRegistry, modelProvider, presenterRegistry, memoryStore, workingMemoryStore, contextAssembler, knowledgeGraph, getActiveModel, persona }) {
+  constructor({ eventBus, taskRuntime, toolRegistry, modelProvider, presenterRegistry, memoryStore, workingMemoryStore, contextAssembler, knowledgeGraph, getActiveModel, persona, historyStore }) {
     this.eventBus = eventBus;
     this.taskRuntime = taskRuntime;
     this.toolRegistry = toolRegistry;
@@ -715,10 +714,79 @@ class ConversationRuntime {
     // Perfil de persona resuelto (fábrica + overlay de cliente). Si no se pasa,
     // renderPersonaPrompt cae al perfil de fábrica.
     this.persona = persona || null;
-    this.history = [];
+    // El historial en memoria sobrevive el proceso si hay historyStore: se
+    // restaura el final del JSONL persistido (ver history-store.js).
+    this.historyStore = historyStore || null;
+    this.history = this.historyStore?.loadRecent(12) || [];
+    // Estado de sesión persistente: resumen rolling de turnos eviccionados
+    // y compromiso multi-turno activo (pendingIntent).
+    const savedState = this.historyStore?.loadState() || {};
+    this.pendingIntent = savedState.pendingIntent || null;
+    this._cachedSummary = savedState.summary || null;
     // Lecciones de comportamiento que estuvieron en juego el turno anterior.
     // Se evalúan contra la reacción del usuario en el turno siguiente (refuerzo).
     this._lessonsInPlay = [];
+  }
+
+  // Registra un turno completo (usuario + resumen del modelo) en memoria y en
+  // disco. Único punto de escritura de this.history para mantener ambos en
+  // sync — ver pushHistory en los dos sitios donde se cierra un turno de HUD.
+  pushHistory(text, result) {
+    const modelText = summarizeConversationResult(result);
+    this.history.push({ role: 'user', parts: [{ text }] });
+    this.history.push({ role: 'model', parts: [{ text: modelText }] });
+    if (this.history.length > 12) {
+      // En vez de tirar los turnos eviccionados, los guardamos para incorporarlos
+      // al resumen rolling en el próximo maybeTrimHistory().
+      const evicted = this.history.splice(0, this.history.length - 12);
+      this.historyStore?.appendEvicted(evicted);
+    }
+    this.historyStore?.append({ role: 'user', text });
+    this.historyStore?.append({ role: 'model', text: modelText });
+  }
+
+  // Incorpora turnos eviccionados al resumen rolling si hay acumulados y no
+  // hay un hilo abierto. Se llama al inicio de cada turno para no bloquear la
+  // respuesta — si falla, la conversación sigue sin el summary actualizado.
+  async maybeTrimHistory() {
+    if (!this.historyStore || !this.modelProvider) return;
+    if (this.pendingIntent) return; // no comprimir con un hilo abierto
+    const evicted = this.historyStore.loadEvicted();
+    if (!evicted || evicted.length === 0) return;
+
+    const evictedText = evicted
+      .map((e) => `${e.role === 'model' ? 'Jarvis' : 'Usuario'}: ${e.text}`)
+      .join('\n');
+    const existingSummary = this._cachedSummary || '';
+
+    try {
+      const result = await this.modelProvider.generateText({
+        system: 'Eres un asistente que comprime historial de conversación. Responde solo con el resumen, sin preámbulo.',
+        messages: [{
+          role: 'user',
+          parts: [{
+            text: [
+              existingSummary ? `Resumen existente:\n${existingSummary}` : '',
+              `Turnos a incorporar:\n${evictedText}`,
+              'Genera un resumen actualizado en máximo 250 palabras. Preserva: compromisos activos, decisiones tomadas, contexto relevante para continuar. Descarta: saludos, confirmaciones triviales, repeticiones.'
+            ].filter(Boolean).join('\n\n')
+          }]
+        }],
+        maxTokens: 350,
+        purpose: 'history_compression'
+      });
+
+      const newSummary = `[Resumen de conversación anterior]\n${result.text || result}`;
+      this._cachedSummary = newSummary;
+      this.historyStore.saveState({ summary: newSummary, pendingIntent: this.pendingIntent });
+      this.historyStore.clearEvicted();
+
+      this.eventBus.emit('conversation_history_compressed', {
+        message: 'Comprimí el historial para mantener fluidez. Si quieres que el próximo resumen enfatice algo, dímelo.'
+      });
+    } catch (_) {
+      // Si falla la compresión, la conversación sigue sin interrumpirse.
+    }
   }
 
   // System 100% estable (persona, tools, reglas) marcado para prompt caching.
@@ -750,6 +818,7 @@ Responde siempre JSON valido con esta forma:
   "format": "brief | list | table | sections | artifact",
   "depth": "brief | expanded",
   "outputValue": { "mode": "response | inspection | summary | analysis | comparison", "requiresTransformation": true/false },
+  "pendingIntent": "opcional: solo si comprometiste algo multi-turno que aún no terminaste — qué es en una frase. Omite o pon vacío si terminaste todo lo pedido.",
   "toolCalls": [
     { "toolName": "nombre.herramienta", "input": { } }
   ]
@@ -807,7 +876,12 @@ El mensaje del usuario puede venir precedido por un bloque [contexto] con memori
 
 ACCIONES PENDIENTES DE CONFIRMACIÓN:
 - Si el contexto incluye "[Acciones pendientes de confirmación]", son acciones (de cualquier herramienta) que quedaron esperando el visto bueno del usuario en turnos previos. Revisa si el mensaje actual confirma, cancela o se refiere a alguna — y resuélvela con tasks.confirm_pending o tasks.cancel_pending usando su "id". No vuelvas a generar esa misma acción desde cero.
-- Si el mensaje es sobre algo nuevo y distinto, ignora ese bloque y procede normal: las acciones pendientes no se cancelan solas.`;
+- Si el mensaje es sobre algo nuevo y distinto, ignora ese bloque y procede normal: las acciones pendientes no se cancelan solas.
+
+COMPROMISO PENDIENTE (pendingIntent):
+- Si el contexto incluye "[Compromiso pendiente]", lo declaraste tú en un turno anterior: es algo que prometiste hacer y aún no terminaste. Retómalo si corresponde.
+- Cuando TÚ te comprometes a algo que requiere más de un turno (ej: "voy a prepararte X", "te armo Y", "ahora reviso Z y te cuento"), declara ese compromiso en "pendingIntent" — una frase concisa de qué queda pendiente.
+- Cuando ese compromiso queda resuelto (entregaste lo que prometiste), omite "pendingIntent" o ponlo vacío. No lo mantengas vivo si ya terminaste.`;
 
     const stableWithModel = stable + this.buildModelAwarenessPrompt();
     return [{ text: stableWithModel, cache: true }];
@@ -1035,19 +1109,30 @@ Reglas:
       }]
     }];
 
-    if (typeof this.modelProvider.generateText === 'function') {
-      const out = await this.modelProvider.generateText({ system, messages, temperature: 0.4, maxTokens: 1200, purpose: 'conversation_screen_detail' });
-      return String(out.text || '').trim();
-    }
-    // Fallback si el proveedor activo no expone generateText: usar el camino JSON.
-    const out = await this.modelProvider.generateJson({
-      system: `${system}\n\nResponde JSON: { "visual": "<markdown>" }`,
-      messages,
-      temperature: 0.4,
-      maxTokens: 1200,
-      purpose: 'conversation_screen_detail'
+    const isComplete = (_text, stopReason) => stopReason !== 'max_tokens';
+    const callOnce = typeof this.modelProvider.generateText === 'function'
+      ? async (msgs, maxTokens) => {
+          const out = await this.modelProvider.generateText({ system, messages: msgs, temperature: 0.4, maxTokens, purpose: 'conversation_screen_detail' });
+          return { text: String(out.text || ''), stopReason: out.stopReason || null };
+        }
+      // Fallback si el proveedor activo no expone generateText: usar el camino JSON.
+      : async (msgs, maxTokens) => {
+          const out = await this.modelProvider.generateJson({
+            system: `${system}\n\nResponde JSON: { "visual": "<markdown>" }`,
+            messages: msgs,
+            temperature: 0.4,
+            maxTokens,
+            purpose: 'conversation_screen_detail'
+          });
+          return { text: String(out.data?.visual || ''), stopReason: out.stopReason || null };
+        };
+
+    const { text } = await generateWithContinuation({
+      callOnce,
+      prompt: messages[0].parts[0].text,
+      isComplete
     });
-    return String(out.data?.visual || '').trim();
+    return text;
   }
 
   listPendingConfirmations() {
@@ -1122,6 +1207,10 @@ Reglas:
     const confirmedTask = await this.maybeConfirmPendingTask({ text, conversationTask, channel });
     if (confirmedTask) return confirmedTask;
 
+    // Compresión asíncrona del historial eviccionado. No bloquea si no hay nada
+    // que comprimir ni si hay un pendingIntent activo (hilo abierto).
+    await this.maybeTrimHistory();
+
     const recentHistoryText = this.history
       .slice(-4)
       .map((entry) => entry.parts?.map((part) => part.text || '').join(' '))
@@ -1151,10 +1240,20 @@ Reglas:
         ].join('\n')
       : '';
 
+    // Compromiso multi-turno activo: si Jarvis declaró un pendingIntent en un
+    // turno anterior, lo inyectamos para que no pierda el hilo.
+    const pendingIntentContext = this.pendingIntent
+      ? `[Compromiso pendiente]\n${this.pendingIntent}\nSi este turno lo resuelve, omite "pendingIntent" en tu respuesta.`
+      : '';
+
+    // Resumen rolling de turnos eviccionados: contexto de más atrás del
+    // ventana de 6 turnos en memoria. Viaja aquí, no en el system (cacheable).
+    const summaryContext = this._cachedSummary || '';
+
     // El contexto dinámico viaja en el mensaje actual, no en el system ni en el
     // historial: el system queda estable (cacheable) y el historial guarda el
     // texto crudo del usuario sin arrastrar contextos viejos turno tras turno.
-    const dynamicContext = [memoryContext, workingContext, pendingContext].filter(Boolean).join('\n\n');
+    const dynamicContext = [summaryContext, memoryContext, workingContext, pendingContext, pendingIntentContext].filter(Boolean).join('\n\n');
     const currentUserText = dynamicContext ? `${dynamicContext}\n\n[Mensaje del usuario]\n${text}` : text;
 
     const messages = [
@@ -1222,9 +1321,7 @@ Reglas:
           recoveredFrom: 'plain_text'
         });
         if (channel !== 'agent') {
-          this.history.push({ role: 'user', parts: [{ text }] });
-          this.history.push({ role: 'model', parts: [{ text: summarizeConversationResult(conversationTask.result) }] });
-          if (this.history.length > 12) this.history.splice(0, this.history.length - 12);
+          this.pushHistory(text, conversationTask.result);
         }
         this.scheduleBackgroundLearning({ text, channel, conversationTask, toolResults: [] });
         return conversationTask;
@@ -1255,6 +1352,16 @@ Reglas:
       visual: decision.visual,
       format: decision.format
     });
+
+    // Actualiza el estado de pendingIntent según lo que declaró el modelo.
+    // Si omitió el campo o lo puso vacío, se considera hilo cerrado.
+    const declaredIntent = typeof decision.pendingIntent === 'string' ? decision.pendingIntent.trim() : null;
+    const newPendingIntent = declaredIntent || null;
+    if (newPendingIntent !== this.pendingIntent) {
+      this.pendingIntent = newPendingIntent;
+      const currentState = this.historyStore?.loadState() || {};
+      this.historyStore?.saveState({ ...currentState, pendingIntent: this.pendingIntent });
+    }
 
     this.taskRuntime.emitTaskEvent(conversationTask, 'task_progress', {
       step: 'model_decision',
@@ -1486,9 +1593,7 @@ Reglas:
     // Las corridas de agentes no entran al historial del HUD: son misiones
     // automáticas, no parte de la conversación con el usuario.
     if (channel !== 'agent') {
-      this.history.push({ role: 'user', parts: [{ text }] });
-      this.history.push({ role: 'model', parts: [{ text: summarizeConversationResult(conversationTask.result) }] });
-      if (this.history.length > 12) this.history.splice(0, this.history.length - 12);
+      this.pushHistory(text, conversationTask.result);
     }
 
     this.scheduleBackgroundLearning({ text, channel, conversationTask, toolResults });
@@ -1541,7 +1646,8 @@ Reglas:
           assistantResult: conversationTask.result,
           toolResults,
           memoryStore: this.memoryStore,
-          modelProvider: this.modelProvider
+          modelProvider: this.modelProvider,
+          recentHistory: recentHistoryText
         });
       } catch (_) {
         // Learning should never break the live conversation path.
