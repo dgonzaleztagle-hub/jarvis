@@ -746,27 +746,30 @@ function createRuntime(options = {}) {
   syncRuntimeSelfKnowledge({ memoryStore, toolRegistry });
 
   // Escucha reactiva: cuando wa.start_watching está activo, procesar mensajes
-  // entrantes y responder automáticamente al remitente. Guard de concurrencia
-  // para no solapar dos handleMessage simultáneos del mismo canal.
-  let _waMsgLock = false;
-  eventBus.on('whatsapp_incoming', async ({ jid, name, text }) => {
-    if (_waMsgLock) return;
-    _waMsgLock = true;
-    try {
-      const task = await conversationRuntime.handleMessage({
-        text: `[WhatsApp de ${name}]: ${text}`,
-        channel: 'whatsapp',
-        context: { whatsapp: { jid, senderName: name } }
-      });
-      const reply = task.result?.speak || task.result?.visual || null;
-      if (reply && whatsappChannel.connected && whatsappChannel.sock) {
-        await whatsappChannel.sock.sendMessage(jid, { text: String(reply) });
+  // entrantes y responder automáticamente al remitente.
+  //
+  // Serialización por COLA, no por lock que descarta. conversationRuntime tiene
+  // estado de instancia compartido (history rolling, pendingIntent, lecciones en
+  // juego): dos handleMessage concurrentes lo corromperían, así que se procesa de
+  // a uno. Pero encolando — el lock anterior tiraba el mensaje si llegaba durante
+  // otro, perdiendo silenciosamente el segundo de dos mensajes seguidos.
+  let _waChain = Promise.resolve();
+  eventBus.on('whatsapp_incoming', ({ jid, name, text }) => {
+    _waChain = _waChain.then(async () => {
+      try {
+        const task = await conversationRuntime.handleMessage({
+          text: `[WhatsApp de ${name}]: ${text}`,
+          channel: 'whatsapp',
+          context: { whatsapp: { jid, senderName: name } }
+        });
+        const reply = task.result?.speak || task.result?.visual || null;
+        if (reply && whatsappChannel.connected && whatsappChannel.sock) {
+          await whatsappChannel.sock.sendMessage(jid, { text: String(reply) });
+        }
+      } catch (err) {
+        console.warn(`[jarvis-codex] WhatsApp watching error: ${err.message}`);
       }
-    } catch (err) {
-      console.warn(`[jarvis-codex] WhatsApp watching error: ${err.message}`);
-    } finally {
-      _waMsgLock = false;
-    }
+    });
   });
 
   const telegramChannel = new TelegramChannel({
