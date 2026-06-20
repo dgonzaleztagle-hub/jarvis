@@ -6,6 +6,9 @@ function inferCapabilityGroup(toolName = '') {
   if (/^agents\./.test(toolName)) return 'Agentes automaticos';
   if (/^tasks\./.test(toolName)) return 'Tareas autonomas';
   if (/^meeting\./.test(toolName)) return 'Reuniones';
+  if (/^video\./.test(toolName)) return 'Creacion de video (Remotion + ffmpeg)';
+  if (/^social\./.test(toolName)) return 'Redes sociales';
+  if (/^brand\./.test(toolName)) return 'Marca y marketing';
   if (/^vision\./.test(toolName)) return 'Vision e imagenes';
   if (/^wa\./.test(toolName)) return 'WhatsApp personal';
   if (/^web\./.test(toolName)) return 'Web';

@@ -435,8 +435,6 @@ function createRuntime(options = {}) {
     toolRegistry.register(tool);
   }
 
-  syncRuntimeSelfKnowledge({ memoryStore, toolRegistry });
-
   // Perfil de marca: se crea acá (antes del context-assembler) para poder
   // inyectar la marca activa al contexto en turnos de marketing. Las tools se
   // registran más abajo junto al resto.
@@ -740,6 +738,12 @@ function createRuntime(options = {}) {
   if (options.whatsapp?.autoStart !== false && whatsappChannel.hasSession()) {
     whatsappChannel.start().catch((e) => console.warn(`[jarvis-codex] WhatsApp no conectó al arranque: ${e.message}`));
   }
+
+  // Self-knowledge DESPUÉS de registrar TODOS los conectores. Antes corría a
+  // mitad del registro y el snapshot se perdía meeting, video, social, brand,
+  // whatsapp, sheets y más — Jarvis literalmente no sabía que tenía esas
+  // capacidades cuando le preguntaban "qué puedes hacer".
+  syncRuntimeSelfKnowledge({ memoryStore, toolRegistry });
 
   // Escucha reactiva: cuando wa.start_watching está activo, procesar mensajes
   // entrantes y responder automáticamente al remitente. Guard de concurrencia
