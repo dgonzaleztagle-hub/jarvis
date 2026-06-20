@@ -302,6 +302,14 @@ async function boot() {
   stream.addEventListener('hud_quick_ack', (evt) => {
     try { speakText(JSON.parse(evt.data).payload?.text || ''); } catch (_) {}
   });
+  stream.addEventListener('hud_request_credentials', async (evt) => {
+    try {
+      const payload = JSON.parse(evt.data);
+      const { showCredentialsModal } = await import('./modules/credentials-modal.js');
+      showCredentialsModal(payload);
+    } catch (err) { console.error('[credentials] modal error', err); }
+  });
+
   stream.addEventListener('conversation_history_compressed', (evt) => {
     try {
       const { message } = JSON.parse(evt.data).payload || {};

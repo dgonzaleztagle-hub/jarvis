@@ -244,6 +244,52 @@ async function executeAuditSeo({ url }) {
   };
 }
 
+/* ─── TOOL: web.search ──────────────────────────────────────────────────────── */
+
+async function executeSearch({ query, maxResults = 8 }) {
+  if (!query) throw new Error('WEB_SEARCH_REQUIRES_QUERY');
+  const q = encodeURIComponent(String(query).trim());
+  const limit = Math.min(Number(maxResults) || 8, 20);
+
+  // DuckDuckGo HTML scrape — sin API key, sin tracking
+  const url = `https://html.duckduckgo.com/html/?q=${q}`;
+  let res;
+  try {
+    res = await fetchUrl(url, 15000);
+  } catch (err) {
+    return { ok: false, error: err.message, results: [] };
+  }
+  if (!res.ok) return { ok: false, error: `HTTP ${res.status}`, results: [] };
+
+  // Extraer resultados del HTML de DDG
+  const html = res.body;
+  const results = [];
+  const resultRe = /<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+  const snippetRe = /<a[^>]+class="result__snippet"[^>]*>([\s\S]*?)<\/a>/gi;
+  const snippets = [];
+  let sm;
+  while ((sm = snippetRe.exec(html)) !== null) {
+    snippets.push(stripTags(sm[1]).trim());
+  }
+  let rm; let i = 0;
+  while ((rm = resultRe.exec(html)) !== null && results.length < limit) {
+    const rawUrl = rm[1];
+    const title = stripTags(rm[2]).trim();
+    if (!title || !rawUrl) continue;
+    // DDG wraps URLs in redirects — extraer URL real
+    let href = rawUrl;
+    const uddgMatch = rawUrl.match(/uddg=([^&]+)/);
+    if (uddgMatch) {
+      try { href = decodeURIComponent(uddgMatch[1]); } catch (_) {}
+    }
+    if (!href.startsWith('http')) continue;
+    results.push({ title, url: href, snippet: snippets[i] || '' });
+    i++;
+  }
+
+  return { ok: true, query, results };
+}
+
 /* ─── EXPORTS ───────────────────────────────────────────────────────────────── */
 
 function createWebFetchTools() {
@@ -263,6 +309,18 @@ function createWebFetchTools() {
       permissions: [],
       required: ['url'],
       execute: executeAuditSeo,
+    },
+    {
+      name: 'web.search',
+      description: 'Buscar en internet y obtener los primeros resultados relevantes (título, URL, resumen) sin necesidad de API key. Input: { query: "qué buscar", maxResults?: número (default 8, máx 20) }. Úsalo para investigar servicios, encontrar documentación, buscar servidores MCP, o responder preguntas que requieren información actualizada.',
+      risk: 'low',
+      permissions: [],
+      required: ['query'],
+      aliases: {
+        query: ['buscar', 'busca', 'search', 'q', 'consulta'],
+        maxResults: ['max_results', 'limit', 'count', 'n']
+      },
+      execute: executeSearch,
     },
   ];
 }

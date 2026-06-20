@@ -387,6 +387,25 @@ function createGoogleCalendarTools({ authFactory }) {
     return { timeMin, timeMax, durationMinutes: durationMin, freeSlots: slots.slice(0, 10) };
   }
 
+  async function listCalendars(input = {}) {
+    const auth = authFactory.getClient();
+    const calendar = google.calendar({ version: 'v3', auth });
+    const response = await withRetry(() =>
+      calendar.calendarList.list({ minAccessRole: input.minAccessRole || 'reader' })
+    );
+    return {
+      calendars: (response.data.items || []).map((c) => ({
+        id: c.id,
+        summary: c.summary,
+        description: c.description || '',
+        primary: c.primary || false,
+        accessRole: c.accessRole,
+        backgroundColor: c.backgroundColor || null,
+        timeZone: c.timeZone || null
+      }))
+    };
+  }
+
   return [
     {
       name: 'google.calendar.list_events',
@@ -460,6 +479,13 @@ function createGoogleCalendarTools({ authFactory }) {
         workDayEnd: ['work_end', 'fin_jornada']
       },
       execute: findFreeSlots
+    },
+    {
+      name: 'google.calendar.list_calendars',
+      description: 'Listar todos los calendarios del usuario (primario, compartidos, de trabajo, feriados, etc.). Útil antes de crear un evento en un calendario específico o para saber qué calendarios tiene activos. Sin input requerido.',
+      risk: 'low',
+      permissions: ['google:calendar:read'],
+      execute: listCalendars
     }
   ];
 }

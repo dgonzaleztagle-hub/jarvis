@@ -26,6 +26,15 @@ function extractText(message = {}) {
   return null;
 }
 
+// Nombre coincide si es idéntico o si la query es una palabra completa del nombre.
+// "daniel".includes("daniel") → ok, pero "daniela" NO contiene "daniel" como
+// palabra completa — previene el falso match Daniela ↔ Daniel.
+function matchesName(name, needle) {
+  const n = name.toLowerCase();
+  if (n === needle) return true;
+  return n.split(/\s+/).includes(needle);
+}
+
 function toJid(phone) {
   let digits = String(phone || '').replace(/\D/g, '');
   if (!digits) return null;
@@ -51,6 +60,10 @@ class WhatsAppChannel {
     // está guardado en el teléfono del usuario. Solo en memoria.
     this.contacts = new Map();
     this.debugFile = path.join(dataDir, 'whatsapp', 'debug.log');
+    // Modo escucha reactiva: cuando está activo, cada mensaje entrante
+    // emite whatsapp_incoming en el eventBus para que el runtime lo procese.
+    this.watching = false;
+    this.watchFilter = null; // null = todos los mensajes directos
   }
 
   hasSession() {
@@ -196,15 +209,46 @@ class WhatsAppChannel {
     if (msg.key?.fromMe) return;
     const text = extractText(msg.message || {});
     if (!text) return;
-    this.messages.push({
+    const entry = {
       jid,
       name: msg.pushName || jid.split('@')[0],
       text: String(text).slice(0, 500),
       at: new Date((Number(msg.messageTimestamp) || Date.now() / 1000) * 1000).toISOString(),
       isGroup: jid.endsWith('@g.us'),
       seen: false
-    });
+    };
+    this.messages.push(entry);
     if (this.messages.length > MAX_BUFFER) this.messages.splice(0, this.messages.length - MAX_BUFFER);
+
+    if (this.watching && !entry.isGroup) {
+      const nameLow = entry.name.toLowerCase();
+      const passesFilter = !this.watchFilter
+        || this.watchFilter.has(nameLow)
+        || this.watchFilter.has(entry.jid.split('@')[0]);
+      if (passesFilter) {
+        this.eventBus?.emit('whatsapp_incoming', { jid: entry.jid, name: entry.name, text: entry.text, at: entry.at });
+      }
+    }
+  }
+
+  startWatching(filter = null) {
+    this.watching = true;
+    if (Array.isArray(filter) && filter.length > 0) {
+      this.watchFilter = new Set(filter.map((f) => String(f).toLowerCase()));
+    } else {
+      this.watchFilter = null;
+    }
+    return this.watchStatus();
+  }
+
+  stopWatching() {
+    this.watching = false;
+    this.watchFilter = null;
+    return this.watchStatus();
+  }
+
+  watchStatus() {
+    return { watching: this.watching, filter: this.watchFilter ? [...this.watchFilter] : null };
   }
 
   // El QR va al HUD por el mismo camino que cualquier imagen del inbox.
@@ -242,17 +286,26 @@ class WhatsAppChannel {
       return { jid: toJid(digits), label: raw };
     }
 
-    // 2. Chats recientes por nombre
     const needle = raw.toLowerCase();
+
+    // 0. Auto-referencial: el usuario pide enviarse algo a sí mismo.
+    // Baileys expone el JID de la cuenta vinculada en this.sock.user.id.
+    if (['self', 'yo', 'mi numero', 'a mi', 'a mí'].includes(needle)) {
+      const ownJid = this.sock?.user?.id;
+      if (ownJid) return { jid: ownJid, label: 'tú (cuenta vinculada)' };
+    }
+
+    // 2. Chats recientes por nombre — word-boundary (no substring).
+    // Evita que "Daniel" matchee a "Daniela" o cualquier nombre que lo contenga.
     const recent = [...this.messages].reverse()
-      .find((m) => !m.isGroup && m.name.toLowerCase().includes(needle));
+      .find((m) => !m.isGroup && matchesName(m.name, needle));
     if (recent) return { jid: recent.jid, label: recent.name };
 
     // 3. Libreta sincronizada (nombres tal como están en el teléfono primero,
-    // nombres de perfil después)
+    // nombres de perfil después) — misma lógica word-boundary.
     let profileMatch = null;
     for (const [jid, entry] of this.contacts) {
-      if (!entry.name.toLowerCase().includes(needle)) continue;
+      if (!matchesName(entry.name, needle)) continue;
       if (entry.fromBook) return { jid, label: entry.name };
       if (!profileMatch) profileMatch = { jid, label: entry.name };
     }

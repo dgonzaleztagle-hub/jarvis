@@ -28,8 +28,13 @@ function saveConnections(dataDir, connections) {
   fs.writeFileSync(getStorePath(dataDir), JSON.stringify(connections, null, 2));
 }
 
+function normalizeMcpUrl(url) {
+  const trimmed = url.replace(/\/$/, '');
+  return trimmed.endsWith('/api/mcp') ? trimmed : `${trimmed}/api/mcp`;
+}
+
 async function callMcp(url, token, method, params) {
-  const res = await fetch(`${url.replace(/\/$/, '')}/api/mcp`, {
+  const res = await fetch(normalizeMcpUrl(url), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({ jsonrpc: '2.0', id: Date.now(), method, params })
@@ -149,6 +154,51 @@ function createMcpConnectionTools({ toolRegistry, dataDir }) {
         }
 
         return { ok: true, id, message: `Desconectado "${removed.label}"` };
+      }
+    },
+    {
+      name: 'connections.reconnect',
+      description: 'Re-sincronizar las herramientas de un dashboard/agente ya conectado: vuelve a hacer tools/list y actualiza el registro si el servidor cambió o agregó herramientas. Input: { id }.',
+      risk: 'low',
+      permissions: ['connections:write'],
+      required: ['id'],
+      execute: async (input) => {
+        const id = input.id;
+        if (!connections[id]) return { ok: false, error: 'NOT_FOUND' };
+
+        const conn = connections[id];
+        let result;
+        try {
+          result = await callMcp(conn.url, conn.token, 'tools/list', {});
+        } catch (err) {
+          return { ok: false, error: 'MCP_RECONNECT_FAILED', message: err.message };
+        }
+
+        const newTools = result?.tools || [];
+        const oldToolNames = new Set((conn.tools || []).map((t) => `${id}.${t.name}`));
+        const newToolNames = new Set(newTools.map((t) => `${id}.${t.name}`));
+
+        // Dar de baja tools que ya no existen.
+        for (const fullName of oldToolNames) {
+          if (!newToolNames.has(fullName)) toolRegistry.tools.delete(fullName);
+        }
+
+        // Registrar tools nuevas o actualizadas.
+        for (const tool of newTools) {
+          registerRemoteTool(toolRegistry, id, conn.label, tool, getConnection);
+        }
+
+        connections[id] = { ...conn, tools: newTools, reconnectedAt: new Date().toISOString() };
+        saveConnections(dataDir, connections);
+
+        return {
+          ok: true,
+          id,
+          label: conn.label,
+          toolsNow: newTools.map((t) => `${id}.${t.name}`),
+          removed: [...oldToolNames].filter((n) => !newToolNames.has(n)),
+          added: [...newToolNames].filter((n) => !oldToolNames.has(n))
+        };
       }
     }
   ];

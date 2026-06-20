@@ -48,16 +48,53 @@ function createWhatsAppTools({ channel }) {
       }
     },
     {
+      name: 'wa.start_watching',
+      description: 'Activar modo escucha reactiva: Jarvis procesará automáticamente los mensajes directos entrantes de WhatsApp y responderá al remitente. Input opcional: { filter: ["nombre1", "nombre2"] } para limitar a contactos específicos. Sin filter = todos los mensajes directos (grupos excluidos siempre).',
+      risk: 'medium',
+      permissions: ['whatsapp:read', 'whatsapp:send'],
+      execute: async (input = {}) => {
+        const status = channel.status();
+        if (!status.connected) return { ok: false, error: 'WhatsApp no está conectado. Usa wa.link primero.' };
+        return { ok: true, ...channel.startWatching(input.filter || null), note: 'Modo escucha activo. Jarvis responderá mensajes entrantes automáticamente.' };
+      }
+    },
+    {
+      name: 'wa.stop_watching',
+      description: 'Desactivar modo escucha reactiva. Jarvis dejará de responder automáticamente a mensajes entrantes de WhatsApp.',
+      risk: 'low',
+      permissions: [],
+      execute: async () => ({ ok: true, ...channel.stopWatching(), note: 'Modo escucha desactivado.' })
+    },
+    {
       name: 'wa.send_message',
-      description: 'Enviar un mensaje de WhatsApp desde la cuenta personal del usuario. Input: { to (nombre de contacto/chat reciente o número con código de país), message (texto EXACTO a enviar) }. Si el usuario dictó el texto literal, se envía directo; si el texto lo redactaste tú, el runtime pedirá confirmación mostrando el borrador.',
-      // risk 'high' (igual que gmail.send_email): por defecto confirma, y la
-      // procedencia (policy-engine, outbound) relaja SOLO si el contenido fue
-      // dictado literal. Esto reemplaza la regla ad-hoc isLiteralDictation que
-      // vivía en app-runtime — un solo mecanismo para todo lo outbound.
+      description: 'Enviar un mensaje de WhatsApp desde la cuenta personal del usuario. Input: { to (nombre de contacto, número con código de país, o "self"/"yo" para enviarte algo a ti mismo), message (texto EXACTO a enviar) }. Si el usuario dictó el texto literal, se envía directo; si el texto lo redactaste tú, el runtime pedirá confirmación mostrando el borrador.',
       risk: 'high',
       outbound: true,
       permissions: ['whatsapp:send'],
-      execute: async (input) => channel.sendMessage(input.to, input.message)
+      // Resuelve el destinatario ANTES de la confirmación: el usuario ve el nombre
+      // y número real en el diálogo de confirmación, no el string crudo del modelo.
+      prepare: async (input) => {
+        const raw = String(input.to || '').trim();
+        if (!raw) return {};
+        // Si ya es un número/email directo, no hay nada que resolver.
+        if (/^[\d+][\d\s+\-().]{5,}$/.test(raw)) return {};
+        try {
+          const resolved = await channel.resolveRecipient(raw);
+          if (!resolved?.jid) return {};
+          const digits = resolved.jid.split('@')[0];
+          return { to: `${resolved.label} (+${digits})`, _jid: resolved.jid };
+        } catch (_) { return {}; }
+      },
+      execute: async (input) => {
+        if (input._jid) {
+          if (!channel.connected || !channel.sock) throw new Error('WHATSAPP_NOT_CONNECTED: vincula la sesión primero (wa.link)');
+          const text = String(input.message || '').trim();
+          if (!text) throw new Error('WHATSAPP_EMPTY_MESSAGE');
+          await channel.sock.sendMessage(input._jid, { text });
+          return { sent: true, to: input.to, chars: text.length };
+        }
+        return channel.sendMessage(input.to, input.message);
+      }
     }
   ];
 }

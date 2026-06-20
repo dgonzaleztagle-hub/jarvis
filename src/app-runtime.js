@@ -20,11 +20,14 @@ const { createGmailTools } = require('./connectors/google-gmail');
 const { createGoogleContactsTools } = require('./connectors/google-contacts');
 const { createGoogleSheetsTools } = require('./connectors/google-sheets');
 const { createGoogleTasksTools } = require('./connectors/google-tasks');
+const { createGoogleDriveTools } = require('./connectors/google-drive');
 const { createModelProvider, createModelTools } = require('./model/model-tools');
 const modelCatalog = require('./model/model-catalog');
 const { UsageMeter } = require('./model/usage-meter');
+const { generateWithContinuation } = require('./model/long-content');
 const { ConversationRuntime } = require('./conversation/conversation-runtime');
-const { resolvePersona, loadPersonaOverlay } = require('./conversation/persona-core');
+const { resolvePersona, loadPersonaOverlay, CONTENT_HONESTY_CLAUSE } = require('./conversation/persona-core');
+const { HistoryStore } = require('./conversation/history-store');
 const { createVoiceTools } = require('./voice/voice-tools');
 const { createEdgeTTSProvider } = require('./voice/edge-tts-provider');
 const { TelegramChannel } = require('./channels/telegram-channel');
@@ -34,6 +37,8 @@ const { createResearchTools } = require('./research/source-quality');
 const { createWebFetchTools } = require('./connectors/web-fetch');
 const { createDesktopTools } = require('./connectors/desktop-control');
 const { createMcpConnectionTools } = require('./connectors/mcp-connections');
+const { createServiceDiscoveryTools } = require('./connectors/service-discovery');
+const { createGenericApiTools } = require('./connectors/generic-api');
 const { PresenterRegistry } = require('./presenters/presenter-registry');
 const { registerGooglePresenters } = require('./presenters/google-presenters');
 const { AgentStore } = require('./agents/agent-store');
@@ -41,6 +46,10 @@ const { AgentScheduler } = require('./agents/agent-scheduler');
 const { createAgentTools } = require('./agents/agent-tools');
 const { executeTask } = require('./agents/task-executor');
 const { createVisionTools } = require('./vision/vision-tools');
+const { createMeetingTools } = require('./meeting/meeting-tools');
+const { createSocialHubTools } = require('./connectors/social-hub');
+const { createVideoTools } = require('./connectors/video-pipeline');
+const { createSheetsMemoryTools } = require('./connectors/sheets-memory');
 
 function createRuntime(options = {}) {
   const dataDir = options.dataDir || DATA_DIR;
@@ -89,6 +98,16 @@ function createRuntime(options = {}) {
   const memoryStore = new MemoryStore({ dataDir });
   bootstrapLegacyMemory({ memoryStore });
   const knowledgeGraph = new KnowledgeGraph({ dataDir });
+  // Poda de arranque: limpia basura efímera y entidades huérfanas acumuladas.
+  // Nunca toca lo verificado, lo declarado por el usuario, ni los compromisos.
+  try {
+    const pruned = knowledgeGraph.prune();
+    if (pruned.removedFacts || pruned.removedEntities) {
+      console.log(`[jarvis-codex] grafo podado: -${pruned.removedFacts} hechos, -${pruned.removedEntities} entidades`);
+    }
+  } catch (err) {
+    console.warn(`[jarvis-codex] poda del grafo falló: ${err.message}`);
+  }
   const credentialVault = new CredentialVault({ dataDir });
   const presenterRegistry = new PresenterRegistry();
   registerGooglePresenters(presenterRegistry);
@@ -182,6 +201,54 @@ function createRuntime(options = {}) {
     risk: 'medium',
     permissions: ['memory:review'],
     execute: async (input) => memoryStore.updateState(input.id, input.state, input.patch || {})
+  });
+
+  toolRegistry.register({
+    name: 'memory.correct',
+    description: 'Corregir o descartar algo que Jarvis tiene guardado (memoria o hecho del grafo) cuando el usuario dice que está mal. Dos pasos: (1) sin "id": busca con { query } y devuelve candidatos de memoria y del grafo con sus ids para que elijas el correcto; (2) con { id, source: "memory"|"fact", action: "reject"|"replace", correction? }: "reject" descarta el dato erróneo (no se vuelve a usar), "replace" además registra el valor correcto — correction: { predicate, object } para hechos del grafo, o { content, title, ... } para memorias.',
+    risk: 'medium',
+    permissions: ['memory:review'],
+    execute: async (input) => {
+      if (!input.id) {
+        const query = String(input.query || '');
+        const memories = memoryStore.searchScored(query, { limit: 5 }).map(({ record, score }) => ({
+          id: record.id, source: 'memory', type: record.type, title: record.title,
+          content: record.content, state: record.state, score
+        }));
+        const profiles = knowledgeGraph.retrieveForMessage(query, { limit: 5 });
+        const facts = profiles.flatMap((p) => p.facts.map((f) => ({
+          id: f.id, source: 'fact', entity: p.entity.name, predicate: f.predicate, object: f.object, state: f.state
+        })));
+        return { found: memories.length + facts.length, memories, facts };
+      }
+
+      if (input.source === 'fact') {
+        if (input.action === 'replace' && input.correction) {
+          const old = knowledgeGraph.setFactState(input.id, 'obsolete');
+          if (!old) return { ok: false, error: 'NOT_FOUND' };
+          const replacement = knowledgeGraph.addFact(
+            old.subjectId,
+            input.correction.predicate || old.predicate,
+            input.correction.object,
+            { confidence: 1, source: 'user_correction', state: 'verified' }
+          );
+          return { ok: true, old, replacement };
+        }
+        const fact = knowledgeGraph.setFactState(input.id, 'rejected');
+        return fact ? { ok: true, fact } : { ok: false, error: 'NOT_FOUND' };
+      }
+
+      try {
+        if (input.action === 'replace' && input.correction) {
+          const record = memoryStore.updateState(input.id, 'verified', { ...input.correction, sourceRefs: ['user_correction'] });
+          return { ok: true, record };
+        }
+        const record = memoryStore.updateState(input.id, 'rejected');
+        return { ok: true, record };
+      } catch (err) {
+        return { ok: false, error: err.message };
+      }
+    }
   });
 
   toolRegistry.register({
@@ -341,6 +408,10 @@ function createRuntime(options = {}) {
     toolRegistry.register(tool);
   }
 
+  for (const tool of createGoogleDriveTools({ authFactory: googleAuthFactory, dataDir })) {
+    toolRegistry.register(tool);
+  }
+
   for (const tool of createModelTools({ provider: modelProvider, usageMeter })) {
     toolRegistry.register(tool);
   }
@@ -371,6 +442,7 @@ function createRuntime(options = {}) {
   // Sin overlay → perfil idéntico al de siempre. options.persona permite
   // inyectar un overlay en tests sin tocar disco.
   const persona = resolvePersona(options.persona || loadPersonaOverlay(dataDir));
+  const historyStore = new HistoryStore({ dataDir });
   const conversationRuntime = new ConversationRuntime({
     eventBus,
     fileLogger,
@@ -383,8 +455,23 @@ function createRuntime(options = {}) {
     contextAssembler,
     knowledgeGraph,
     getActiveModel,
-    persona
+    persona,
+    historyStore
   });
+  toolRegistry.register({
+    name: 'conversation.recall',
+    description: 'Buscar en el historial completo de la conversación (no solo los últimos turnos). Útil para "¿qué te dije hace un rato/ayer?" o para encontrar algo mencionado antes. Input opcional: { query?: "texto a buscar", sinceMinutes?: number, limit?: number }.',
+    risk: 'low',
+    permissions: [],
+    execute: async (input) => ({
+      entries: historyStore.search({
+        query: input?.query,
+        sinceMinutes: input?.sinceMinutes,
+        limit: input?.limit
+      })
+    })
+  });
+
   const agentStore = new AgentStore({ dataDir });
   const agentScheduler = new AgentScheduler({ store: agentStore, conversationRuntime, eventBus, usageMeter });
   for (const tool of createAgentTools({ store: agentStore, scheduler: agentScheduler })) {
@@ -459,6 +546,41 @@ function createRuntime(options = {}) {
   });
 
   toolRegistry.register({
+    name: 'hud.request_credentials',
+    description: 'Mostrar un formulario en el HUD para que el usuario ingrese credenciales de un servicio externo (API key, token, usuario/contraseña). Úsalo cuando necesites conectar un servicio que el usuario aún no autorizó. Input: { service: "nombre del servicio (ej: LinkedIn)", description: "para qué se usará (ej: publicar en tu feed)", fields: [{ key: "api_key", label: "API Key", secret: true, hint: "Encuéntrala en developer.linkedin.com/apps" }] }. Espera hasta 2 minutos a que el usuario llene el formulario. Las credenciales se guardan cifradas en el vault local.',
+    risk: 'medium',
+    permissions: ['vault:write'],
+    required: ['service', 'fields'],
+    execute: async (input) => {
+      const { createRequest } = require('./connectors/pending-credentials');
+      const crypto = require('crypto');
+      const requestId = crypto.randomBytes(8).toString('hex');
+      const service = String(input.service || '').trim();
+      const description = String(input.description || '').trim();
+      const fields = Array.isArray(input.fields) ? input.fields : [];
+      if (fields.length === 0) throw new Error('CREDENTIALS_NO_FIELDS');
+
+      eventBus.emit('hud_request_credentials', { requestId, service, description, fields });
+
+      const values = await createRequest(requestId, { service, fields: fields.map(f => f.key) });
+
+      // Guardar en vault con prefijo del servicio
+      const serviceKey = service.toLowerCase().replace(/[^a-z0-9]/g, '_');
+      const saved = {};
+      for (const field of fields) {
+        const val = values[field.key];
+        if (val) {
+          const vaultKey = `${serviceKey}_${field.key}`.toUpperCase();
+          credentialVault.set(vaultKey, String(val));
+          saved[field.key] = vaultKey;
+        }
+      }
+
+      return { ok: true, service, savedKeys: saved, message: `Credenciales de ${service} guardadas en el vault.` };
+    }
+  });
+
+  toolRegistry.register({
     name: 'hud.open_url',
     description: 'Abrir una página web en el navegador del usuario (pestaña nueva desde el HUD). Input: { url: "https://...", label: "nombre legible opcional" }. Úsalo cuando el usuario pida abrir un sitio o servicio: "abre google calendar" → https://calendar.google.com, "abre gmail" → https://mail.google.com, o cualquier URL que conozcas o hayas encontrado. Funciona desde cualquier canal mientras el HUD esté abierto.',
     risk: 'low',
@@ -489,25 +611,42 @@ function createRuntime(options = {}) {
       // decisión): se genera acá, con techo amplio, usando el MODELO ACTIVO.
       // Así la calidad de la landing depende del modelo (Gemini free vs Sonnet)
       // — justo lo que el flujo de escala de modelos quiere poder comparar.
+      // Detecta si el HTML quedó cortado por el techo de tokens: o el provider
+      // avisa stop_reason==='max_tokens', o el documento nunca llegó a cerrar
+      // </html> (heurística para providers que no reportan stop reason).
+      const isComplete = (text, stopReason) =>
+        stopReason !== 'max_tokens' && /<\/html>\s*$/i.test(text.trim());
+      const stripFences = (text) => text.replace(/^```(?:html)?\s*/i, '').replace(/```\s*$/i, '');
+
+      async function callOnce(messages, maxTokens) {
+        if (typeof modelProvider.generateText === 'function') {
+          const out = await modelProvider.generateText({
+            system: `Eres un diseñador web. Devuelves únicamente HTML+CSS, sin explicaciones ni markdown.\n\n${CONTENT_HONESTY_CLAUSE}`,
+            messages, maxTokens, temperature: 0.5, purpose: 'preview_html'
+          });
+          return { text: String(out.text || ''), stopReason: out.stopReason || null };
+        }
+        const out = await modelProvider.generateJson({
+          system: `Devuelve únicamente JSON { "html": "<documento completo>" }. Sin markdown.\n\n${CONTENT_HONESTY_CLAUSE}`,
+          messages, maxTokens, temperature: 0.5, purpose: 'preview_html'
+        });
+        return { text: String(out.data?.html || ''), stopReason: out.stopReason || null };
+      }
+
       if (!html.trim() && brief) {
-        const genPrompt = `Genera un documento HTML COMPLETO y autocontenido para: ${brief}.\nRequisitos: un único archivo, todo el CSS dentro de <style>, responsive, estética limpia y moderna, contenido realista (no "lorem ipsum"). Sin dependencias externas ni <script>. Devuelve SOLO el HTML empezando por <!doctype html>, sin markdown ni explicación.`;
+        const genPrompt = `Genera un documento HTML COMPLETO y autocontenido para: ${brief}.\nRequisitos: un único archivo, todo el CSS dentro de <style>, responsive, estética cuidada y moderna —no escatimes en diseño—, contenido realista (no "lorem ipsum"). Sin dependencias externas ni <script>. Devuelve SOLO el HTML empezando por <!doctype html>, sin markdown ni explicación.`;
         try {
-          if (typeof modelProvider.generateText === 'function') {
-            const out = await modelProvider.generateText({
-              system: 'Eres un diseñador web. Devuelves únicamente HTML+CSS, sin explicaciones ni markdown.',
-              messages: [{ role: 'user', parts: [{ text: genPrompt }] }],
-              temperature: 0.5, maxTokens: 6000, purpose: 'preview_html'
-            });
-            html = String(out.text || '');
-          } else {
-            const out = await modelProvider.generateJson({
-              system: 'Devuelve únicamente JSON { "html": "<documento completo>" }. Sin markdown.',
-              messages: [{ role: 'user', parts: [{ text: `${genPrompt}\nDevuélvelo como {"html": "..."}.` }] }],
-              temperature: 0.5, maxTokens: 6000, purpose: 'preview_html'
-            });
-            html = String(out.data?.html || '');
+          const { text, truncated } = await generateWithContinuation({
+            callOnce,
+            prompt: genPrompt,
+            isComplete,
+            stripFences,
+            continuePrompt: 'Continúa EXACTAMENTE donde quedó el documento anterior, sin repetir nada de lo ya escrito y sin comentarios, hasta cerrar con </html>.'
+          });
+          if (truncated) {
+            return { ok: false, error: 'PREVIEW_INCOMPLETE: el documento generado quedó cortado (excede el límite de tokens) incluso tras continuar.' };
           }
-          html = html.replace(/^```(?:html)?\s*/i, '').replace(/```\s*$/i, '').trim();
+          html = text;
         } catch (err) {
           return { ok: false, error: `PREVIEW_GENERATION_FAILED: ${err.message}` };
         }
@@ -527,7 +666,23 @@ function createRuntime(options = {}) {
   // Visión genérica: lee imágenes del inbox (boletas, documentos, fotos) con el
   // modelo si soporta multimodal (Anthropic hoy). Pieza genérica — Jarvis decide
   // cómo combinarla con Sheets/Docs/memoria según lo que pida el usuario.
-  for (const tool of createVisionTools({ visionProvider: modelProvider, dataDir })) {
+  for (const tool of createVisionTools({ visionProvider: modelProvider, dataDir, googleAuthFactory })) {
+    toolRegistry.register(tool);
+  }
+
+  for (const tool of createMeetingTools({ eventBus, modelProvider, googleAuthFactory })) {
+    toolRegistry.register(tool);
+  }
+
+  for (const tool of createSheetsMemoryTools({ authFactory: googleAuthFactory, dataDir })) {
+    toolRegistry.register(tool);
+  }
+
+  for (const tool of createSocialHubTools({ credentialVault, dataDir, googleAuthFactory })) {
+    toolRegistry.register(tool);
+  }
+
+  for (const tool of createVideoTools({ dataDir, credentialVault })) {
     toolRegistry.register(tool);
   }
 
@@ -557,9 +712,41 @@ function createRuntime(options = {}) {
   for (const tool of createMcpConnectionTools({ toolRegistry, dataDir })) {
     toolRegistry.register(tool);
   }
+
+  for (const tool of createServiceDiscoveryTools()) {
+    toolRegistry.register(tool);
+  }
+
+  for (const tool of createGenericApiTools({ toolRegistry, dataDir, credentialVault })) {
+    toolRegistry.register(tool);
+  }
   if (options.whatsapp?.autoStart !== false && whatsappChannel.hasSession()) {
     whatsappChannel.start().catch((e) => console.warn(`[jarvis-codex] WhatsApp no conectó al arranque: ${e.message}`));
   }
+
+  // Escucha reactiva: cuando wa.start_watching está activo, procesar mensajes
+  // entrantes y responder automáticamente al remitente. Guard de concurrencia
+  // para no solapar dos handleMessage simultáneos del mismo canal.
+  let _waMsgLock = false;
+  eventBus.on('whatsapp_incoming', async ({ jid, name, text }) => {
+    if (_waMsgLock) return;
+    _waMsgLock = true;
+    try {
+      const task = await conversationRuntime.handleMessage({
+        text: `[WhatsApp de ${name}]: ${text}`,
+        channel: 'whatsapp',
+        context: { whatsapp: { jid, senderName: name } }
+      });
+      const reply = task.result?.speak || task.result?.visual || null;
+      if (reply && whatsappChannel.connected && whatsappChannel.sock) {
+        await whatsappChannel.sock.sendMessage(jid, { text: String(reply) });
+      }
+    } catch (err) {
+      console.warn(`[jarvis-codex] WhatsApp watching error: ${err.message}`);
+    } finally {
+      _waMsgLock = false;
+    }
+  });
 
   const telegramChannel = new TelegramChannel({
     conversationRuntime,

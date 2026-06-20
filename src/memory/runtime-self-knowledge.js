@@ -1,12 +1,22 @@
 function inferCapabilityGroup(toolName = '') {
   if (/^google\.(gmail|calendar|contacts)\./.test(toolName)) return 'Comunicacion y organizacion';
   if (/^google\.docs\./.test(toolName)) return 'Documentos e informes';
+  if (/^google\.sheets\./.test(toolName)) return 'Planillas';
+  if (/^google\.tasks\./.test(toolName)) return 'Tareas Google';
+  if (/^agents\./.test(toolName)) return 'Agentes automaticos';
+  if (/^tasks\./.test(toolName)) return 'Tareas autonomas';
+  if (/^meeting\./.test(toolName)) return 'Reuniones';
+  if (/^vision\./.test(toolName)) return 'Vision e imagenes';
+  if (/^wa\./.test(toolName)) return 'WhatsApp personal';
+  if (/^web\./.test(toolName)) return 'Web';
+  if (/^hud\.|^preview\.|^files\./.test(toolName)) return 'HUD y presentacion';
+  if (/^desktop\./.test(toolName)) return 'Control de escritorio (local)';
+  if (/^memory\./.test(toolName)) return 'Memoria';
+  if (/^mcp\./.test(toolName)) return 'Conexiones externas (MCP)';
   if (/^voice\./.test(toolName)) return 'Voz y audio';
   if (/^research\./.test(toolName)) return 'Investigacion y criterio';
-  if (/^memory\./.test(toolName)) return 'Memoria';
-  if (/^connections\./.test(toolName)) return 'Conexiones externas (MCP)';
-  if (/^desktop\./.test(toolName)) return 'Control de escritorio (local)';
-  if (/^tasks\./.test(toolName)) return 'Tareas autónomas';
+  if (/^conversation\./.test(toolName)) return 'Conversacion';
+  if (/^audit\./.test(toolName)) return 'Auditoria';
   return 'Otras capacidades';
 }
 
@@ -40,7 +50,7 @@ function syncRuntimeSelfKnowledge({ memoryStore, toolRegistry }) {
 
   const capabilityGroups = Array.from(grouped.entries()).map(([name, actions]) => ({
     name,
-    actions: actions.slice(0, 6)
+    actions
   }));
 
   return memoryStore.upsert({

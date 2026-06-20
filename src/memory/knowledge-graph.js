@@ -100,10 +100,33 @@ class KnowledgeGraph {
     const normalizedName = normalizeText(cleanName);
     const now = new Date().toISOString();
 
+    // Tipos que suelen describir la MISMA cosa del mundo real (un negocio es a
+    // la vez org/proyecto/lugar/herramienta-de-dashboard). Colapsan entre sí por
+    // nombre para no fragmentar "Rishtedar" en 4 entidades. Las personas NO
+    // entran a este cluster: dos cosas con el mismo nombre pero una persona y
+    // otra empresa son distintas.
+    const THING_CLUSTER = new Set(['org', 'project', 'place', 'tool', 'concept']);
+
     const graph = this.read();
-    const existing = graph.entities.find(
-      (e) => e.type === cleanType && e.normalizedName === normalizedName
-    );
+    const existing = graph.entities.find((e) => {
+      if (e.type === cleanType && e.normalizedName === normalizedName) return true;
+      // Mismo nombre, distinto tipo, ambos dentro del cluster de "cosas":
+      // es la misma entidad vista desde otro ángulo — reusar, no duplicar.
+      if (e.normalizedName === normalizedName && THING_CLUSTER.has(cleanType) && THING_CLUSTER.has(e.type)) return true;
+      if (e.type !== cleanType) return false;
+      // Personas referidas primero por apodo/relación ("hijito", "mi hijo") y
+      // luego por su nombre real ("Baltasar") no deben fragmentarse en
+      // entidades separadas: si el nombre nuevo es apodo/contact_name de una
+      // existente (o viceversa), o uno contiene literalmente al otro, es la
+      // misma persona.
+      if (cleanType !== 'person') return false;
+      const existingAlias = normalizeText(e.properties?.apodo || e.properties?.contact_name || '');
+      const newAlias = normalizeText(properties?.apodo || properties?.contact_name || '');
+      if (existingAlias && existingAlias === normalizedName) return true;
+      if (newAlias && newAlias === e.normalizedName) return true;
+      if (existingAlias && newAlias && existingAlias === newAlias) return true;
+      return e.normalizedName.includes(normalizedName) || normalizedName.includes(e.normalizedName);
+    });
 
     if (existing) {
       // Merge incremental de propiedades; no se pierde lo previo.
@@ -220,6 +243,19 @@ class KnowledgeGraph {
     graph.commitments.push(commitment);
     this.write(graph);
     return commitment;
+  }
+
+  // Corrige o descarta un hecho existente (el usuario dijo "eso está mal").
+  // No borra el registro: lo deja en 'rejected'/'obsolete' para que getEntityProfile
+  // y getKnowledgeForMessage dejen de mostrarlo, igual que memoryStore.updateState.
+  setFactState(factId, state, patch = {}) {
+    if (!FACT_STATES.includes(state)) return null;
+    const graph = this.read();
+    const fact = graph.facts.find((f) => f.id === factId);
+    if (!fact) return null;
+    Object.assign(fact, patch, { state, updatedAt: new Date().toISOString() });
+    this.write(graph);
+    return fact;
   }
 
   setCommitmentStatus(id, status) {
@@ -353,6 +389,59 @@ class KnowledgeGraph {
       relationships: g.relationships.length,
       commitments: g.commitments.length,
       openCommitments: g.commitments.filter((c) => c.status === 'pending' || c.status === 'active').length
+    };
+  }
+
+  // Poda de basura acumulada. El grafo crece sin techo y se contamina con:
+  // hechos descartados/obsoletos viejos, candidatos de baja confianza que se
+  // vieron una sola vez hace tiempo (ruido del extractor), y entidades huérfanas
+  // sin hechos ni relaciones. Conservadora a propósito: nunca toca 'verified',
+  // ni compromisos, ni nada reciente. Pensada para correr al arranque.
+  prune({ maxAgeDays = 30, minCandidateConfidence = 0.7 } = {}) {
+    const graph = this.read();
+    const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
+    const isOld = (ts) => {
+      const t = new Date(ts || 0).getTime();
+      return Number.isFinite(t) && t > 0 && t < cutoff;
+    };
+
+    const before = {
+      entities: graph.entities.length,
+      facts: graph.facts.length
+    };
+
+    graph.facts = graph.facts.filter((f) => {
+      // Descartados/obsoletos viejos: ya no se muestran, solo pesan.
+      if ((f.state === 'rejected' || f.state === 'obsolete') && isOld(f.updatedAt)) return false;
+      // Candidatos débiles, vistos una sola vez, viejos: ruido del extractor que
+      // nunca se reforzó ni el usuario confirmó.
+      if (
+        f.state === 'candidate' &&
+        (f.observations || 1) <= 1 &&
+        (f.confidence || 0) < minCandidateConfidence &&
+        isOld(f.updatedAt)
+      ) return false;
+      return true;
+    });
+
+    // Entidades huérfanas (sin hechos vivos ni relaciones) y viejas: sobras de
+    // extracciones que no aportan nada al contexto.
+    const subjectsWithFacts = new Set(graph.facts.map((f) => f.subjectId));
+    const inRelationships = new Set(graph.relationships.flatMap((r) => [r.fromId, r.toId]));
+    graph.entities = graph.entities.filter((e) => {
+      if (subjectsWithFacts.has(e.id) || inRelationships.has(e.id)) return true;
+      if (e.source === 'user_explicit' || e.source === 'user_profile') return true; // nunca podar lo que el usuario declaró
+      return !isOld(e.updatedAt);
+    });
+
+    // Relaciones que quedaron colgando de una entidad podada.
+    const liveIds = new Set(graph.entities.map((e) => e.id));
+    graph.relationships = graph.relationships.filter((r) => liveIds.has(r.fromId) && liveIds.has(r.toId));
+
+    this.write(graph);
+    return {
+      removedFacts: before.facts - graph.facts.length,
+      removedEntities: before.entities - graph.entities.length
     };
   }
 }

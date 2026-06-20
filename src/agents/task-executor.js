@@ -71,6 +71,36 @@ REGLAS:
   };
 }
 
+// Después de un paso exitoso, verifica que el output sea realmente útil para
+// el objetivo. Detecta "falsos ok": 404s, JSON vacíos, datos irrelevantes que
+// la tool devolvió sin lanzar excepción pero que harían fallar el siguiente paso.
+async function verifyStepOutput({ goal, step, output, modelProvider }) {
+  const prompt = `Acabas de ejecutar un paso de una tarea autónoma. Verifica si el output es válido para continuar.
+
+OBJETIVO GENERAL: ${goal}
+PASO: ${compact(step.description)} (herramienta: ${step.tool})
+OUTPUT RECIBIDO: ${compact(output, 500)}
+
+¿El output contiene datos útiles y coherentes para avanzar hacia el objetivo?
+Responde ÚNICAMENTE JSON (sin markdown):
+{ "valid": true }
+{ "valid": false, "reason": "..." }  ← si el output es vacío, un error camuflado, datos irrelevantes o claramente inválido`;
+
+  try {
+    const out = await modelProvider.generateJson({
+      system: 'Devuelve únicamente JSON válido. Sin markdown.',
+      messages: [{ role: 'user', parts: [{ text: prompt }] }],
+      temperature: 0.1,
+      maxTokens: 150,
+      purpose: 'task_verify'
+    });
+    const data = out?.data || {};
+    return { valid: data.valid !== false, reason: data.reason || '' };
+  } catch (_) {
+    return { valid: true }; // best-effort: si la verificación falla, no bloqueamos
+  }
+}
+
 // Dado un paso fallido + el error + lo que ya se logró, el modelo propone un
 // input corregido o una herramienta alternativa. Una sola oportunidad.
 async function autoFixStep({ goal, step, error, priorResults, modelProvider, toolRegistry }) {
@@ -153,8 +183,30 @@ async function executeTask({ goal, modelProvider, toolRegistry, channel = 'hud',
       }
     }
 
+    // Verificación de output: detecta "falsos ok" — la tool corrió sin excepción
+    // pero devolvió datos inválidos (404, JSON vacío, contenido irrelevante) que
+    // harían fallar el siguiente paso. Si la verificación falla, se intenta el
+    // mismo autofix que ante errores. No se re-verifica tras un repair.
+    if (result.status === 'ok' && !result.repaired) {
+      const verification = await verifyStepOutput({ goal, step, output: result.output, modelProvider });
+      if (!verification.valid) {
+        const fix = await autoFixStep({
+          goal, step,
+          error: `Verificación de output falló: ${verification.reason}`,
+          priorResults, modelProvider, toolRegistry
+        });
+        if (fix && toolRegistry.get(fix.tool)) {
+          const retried = await runStep(toolRegistry, fix.tool, fix.input, channel);
+          result = { ...retried, repaired: true, verificationFailed: true, verificationReason: verification.reason, repairTool: fix.tool };
+        } else {
+          result = { status: 'error', error: `Output inválido sin corrección posible: ${verification.reason}` };
+        }
+      }
+    }
+
     const record = { n: step.n, description: step.description, tool: stepTool, status: result.status };
     if (result.repaired) record.repaired = true;
+    if (result.verificationFailed) { record.verificationFailed = true; record.verificationReason = result.verificationReason; }
     if (result.output !== undefined) {
       record.output = result.output;
       priorResults.push({ step: step.n, output: compact(result.output, 300) });

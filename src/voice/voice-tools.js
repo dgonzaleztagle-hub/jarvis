@@ -8,7 +8,7 @@ function createVoiceTools({ dataDir, providerOptions = {} }) {
   return [
     {
       name: 'voice.speak',
-      description: 'Generate a local voice artifact using the configured TTS provider.',
+      description: 'Generar audio con voz a partir de texto usando el proveedor TTS configurado.',
       risk: 'medium',
       permissions: ['voice:generate', 'model:external_tts'],
       execute: async (input) => provider.synthesize({

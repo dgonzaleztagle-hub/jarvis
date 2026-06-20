@@ -1,3 +1,10 @@
+// Mapea el finishReason de Gemini al vocabulario que ya usa el resto del
+// código (Anthropic): solo 'max_tokens' importa para detectar truncamiento
+// y disparar generateWithContinuation (ver src/model/long-content.js).
+function toStopReason(finishReason) {
+  return finishReason === 'MAX_TOKENS' ? 'max_tokens' : null;
+}
+
 class GeminiProvider {
   constructor({ apiKey, fetchImpl = fetch }) {
     this.apiKey = apiKey;
@@ -10,13 +17,16 @@ class GeminiProvider {
     ];
   }
 
-  async generateJson({ system, messages, temperature = 0.4 }) {
+  // Llama generateContent con reintentos/fallback de modelo. generationConfig
+  // se pasa tal cual (responseMimeType, maxOutputTokens, etc.) según el caller.
+  async _generateContent({ system, messages, generationConfig }) {
     if (!this.apiKey) throw new Error('GEMINI_API_KEY_MISSING');
 
     // El system puede venir como bloques [{ text, cache }] (formato Anthropic
     // con prompt caching). Gemini no cachea por bloques: se aplana a string.
-    if (Array.isArray(system)) {
-      system = system.map((block) => block?.text || '').filter(Boolean).join('\n\n');
+    let systemText = system;
+    if (Array.isArray(systemText)) {
+      systemText = systemText.map((block) => block?.text || '').filter(Boolean).join('\n\n');
     }
 
     const startedAt = Date.now();
@@ -31,11 +41,8 @@ class GeminiProvider {
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 contents: messages,
-                systemInstruction: { parts: [{ text: system }] },
-                generationConfig: {
-                  responseMimeType: 'application/json',
-                  temperature
-                }
+                systemInstruction: { parts: [{ text: systemText }] },
+                generationConfig
               })
             }
           );
@@ -47,12 +54,14 @@ class GeminiProvider {
           }
 
           const data = await response.json();
-          const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+          const candidate = data.candidates?.[0];
+          const text = candidate?.content?.parts?.[0]?.text;
           if (!text) throw new Error('GEMINI_EMPTY_RESPONSE');
           return {
             model,
             durationMs: Date.now() - startedAt,
-            data: parseJsonText(text)
+            stopReason: toStopReason(candidate?.finishReason),
+            text
           };
         } catch (error) {
           lastError = error;
@@ -62,6 +71,34 @@ class GeminiProvider {
     }
 
     throw lastError || new Error('GEMINI_API_FAILURE');
+  }
+
+  async generateJson({ system, messages, temperature = 0.4, maxTokens }) {
+    const { model, durationMs, stopReason, text } = await this._generateContent({
+      system,
+      messages,
+      generationConfig: {
+        responseMimeType: 'application/json',
+        temperature,
+        ...(maxTokens ? { maxOutputTokens: maxTokens } : {})
+      }
+    });
+    return { model, durationMs, stopReason, data: parseJsonText(text) };
+  }
+
+  // Contraparte de AnthropicProvider.generateText: texto crudo (markdown/HTML),
+  // sin envoltura JSON. Necesario para que generateWithContinuation
+  // (src/model/long-content.js) funcione igual con Gemini que con Anthropic.
+  async generateText({ system, messages, temperature = 0.4, maxTokens }) {
+    const { model, durationMs, stopReason, text } = await this._generateContent({
+      system,
+      messages,
+      generationConfig: {
+        temperature,
+        ...(maxTokens ? { maxOutputTokens: maxTokens } : {})
+      }
+    });
+    return { model, durationMs, stopReason, text: text.trim() };
   }
 }
 

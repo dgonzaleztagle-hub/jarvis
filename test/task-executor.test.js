@@ -97,6 +97,46 @@ test('falla si el plan referencia una tool inexistente', async () => {
   assert.equal(res.steps[0].status, 'unknown_tool');
 });
 
+test('verificación detecta output inválido (falso ok) y repara antes de continuar', async () => {
+  let calls = 0;
+  const registry = registryWith([
+    { name: 'fetcher', risk: 'low', execute: async (i) => {
+      calls++;
+      // Primera llamada: URL mala, la tool no lanza pero devuelve basura
+      if (i.bad_url) return { html: '<html>404 Not Found</html>' };
+      // Segunda llamada: URL correcta
+      return { rate: 950.5, currency: 'USD' };
+    }}
+  ]);
+  const model = fakeModel([
+    { feasible: true, steps: [{ n: 1, description: 'obtener tasa del dólar', tool: 'fetcher', input: { bad_url: true } }] },
+    { valid: false, reason: 'respuesta es un 404, no contiene datos de divisas' }, // verifyStepOutput
+    { fixable: true, tool: 'fetcher', input: { bad_url: false } }                 // autoFixStep
+  ]);
+
+  const res = await executeTask({ goal: 'obtener tasa del dólar', modelProvider: model, toolRegistry: registry });
+  assert.equal(res.status, 'completed');
+  assert.equal(calls, 2, 'debe haberse llamado la tool dos veces');
+  assert.equal(res.steps[0].verificationFailed, true);
+  assert.equal(res.steps[0].repaired, true);
+  assert.match(res.steps[0].verificationReason, /404/);
+});
+
+test('verificación detecta output inválido sin fix posible y falla la tarea', async () => {
+  const registry = registryWith([
+    { name: 'broken', risk: 'low', execute: async () => ({ error: 'service unavailable' }) }
+  ]);
+  const model = fakeModel([
+    { feasible: true, steps: [{ n: 1, description: 'llamar servicio', tool: 'broken', input: {} }] },
+    { valid: false, reason: 'el servicio devolvió error, no datos útiles' }, // verifyStepOutput
+    { fixable: false }                                                        // autoFixStep sin solución
+  ]);
+
+  const res = await executeTask({ goal: 'obtener datos del servicio', modelProvider: model, toolRegistry: registry });
+  assert.equal(res.status, 'failed');
+  assert.match(res.steps[0].error, /inválido/);
+});
+
 test('la tool tasks.run_autonomous queda registrada y anti-recursión activa', () => {
   const { createRuntime } = require('../src/app-runtime');
   const runtime = createRuntime({ dataDir: tempDataDir(), agents: { autoStart: false } });

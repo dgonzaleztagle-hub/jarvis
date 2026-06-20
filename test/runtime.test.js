@@ -244,6 +244,44 @@ test('conversation runtime injects working memory context for followups', async 
   assert.ok(userParts.some((part) => /Inventory API approval/.test(part)));
 });
 
+test('historial de conversación persiste y se restaura tras reiniciar el runtime', async () => {
+  const dataDir = tempDataDir();
+  const fakeProvider = {
+    generateJson: async () => ({
+      model: 'fake-model',
+      data: { speak: 'Anotado.', visual: '', format: 'sections', toolCalls: [] }
+    })
+  };
+
+  const runtime1 = createRuntime({ dataDir, agents: { autoStart: false }, model: { provider: fakeProvider } });
+  await runtime1.conversationRuntime.handleMessage({ text: 'recuerda que el lunes viaja a Santiago', channel: 'test' });
+  assert.equal(runtime1.conversationRuntime.history.length, 2);
+
+  const runtime2 = createRuntime({ dataDir, agents: { autoStart: false }, model: { provider: fakeProvider } });
+  assert.equal(runtime2.conversationRuntime.history.length, 2);
+  assert.match(runtime2.conversationRuntime.history[0].parts[0].text, /Santiago/);
+});
+
+test('conversation.recall busca en el historial persistido por texto', async () => {
+  const dataDir = tempDataDir();
+  const fakeProvider = {
+    generateJson: async () => ({
+      model: 'fake-model',
+      data: { speak: 'Anotado.', visual: '', format: 'sections', toolCalls: [] }
+    })
+  };
+
+  const runtime = createRuntime({ dataDir, agents: { autoStart: false }, model: { provider: fakeProvider } });
+  await runtime.conversationRuntime.handleMessage({ text: 'recuerda que el lunes viaja a Santiago', channel: 'test' });
+
+  const recall = runtime.toolRegistry.get('conversation.recall');
+  const result = await recall.execute({ query: 'santiago' });
+  assert.ok(result.entries.some((e) => /Santiago/.test(e.text)));
+
+  const empty = await recall.execute({ query: 'inconexo-xyz' });
+  assert.equal(empty.entries.length, 0);
+});
+
 test('high risk tools require confirmation', async () => {
   const runtime = createRuntime({ dataDir: tempDataDir() });
   runtime.toolRegistry.register({

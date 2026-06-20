@@ -77,6 +77,77 @@ test('compromisos: alta, listado por estado y cambio de estado', () => {
   assert.equal(graph.getOpenCommitmentsSummary(), '');
 });
 
+test('upsertEntity colapsa misma cosa con distinto tipo (org/place/project/tool)', () => {
+  const graph = new KnowledgeGraph({ dataDir: tempDataDir() });
+  const org = graph.upsertEntity('org', 'Rishtedar', { dueño: 'Vikram' });
+  const place = graph.upsertEntity('place', 'Rishtedar', { ciudad: 'Santiago' });
+  const proj = graph.upsertEntity('project', 'Rishtedar', { estado: 'activo' });
+  assert.equal(org.id, place.id);
+  assert.equal(org.id, proj.id);
+  assert.equal(graph.stats().entities, 1);
+  // pero una PERSONA con el mismo nombre NO se fusiona con la cosa
+  const person = graph.upsertEntity('person', 'Rishtedar');
+  assert.notEqual(person.id, org.id);
+  assert.equal(graph.stats().entities, 2);
+});
+
+test('upsertEntity fusiona persona por apodo/contact_name y por nombre real', () => {
+  const graph = new KnowledgeGraph({ dataDir: tempDataDir() });
+  const apodo = graph.upsertEntity('person', 'hijito', { contact_name: 'hijito' });
+  const real = graph.upsertEntity('person', 'Baltasar', { apodo: 'hijito' });
+  assert.equal(apodo.id, real.id);
+  assert.equal(graph.stats().entities, 1);
+});
+
+test('storeExtraction descarta hechos efímeros y auto-claims del asistente', () => {
+  const graph = new KnowledgeGraph({ dataDir: tempDataDir() });
+  const result = storeExtraction(graph, {
+    entities: [
+      { name: 'WhatsApp', type: 'tool' },
+      { name: 'Jarvis', type: 'tool' },
+      { name: 'Vikram', type: 'person' }
+    ],
+    facts: [
+      { subject: 'WhatsApp', predicate: 'tiene_error', object: 'true', confidence: 0.9 },
+      { subject: 'WhatsApp', predicate: 'estado_conexion', object: 'conectado', confidence: 0.9 },
+      { subject: 'Vikram', predicate: 'puede_gestionar_correos', object: 'true', confidence: 0.9 },
+      { subject: 'Vikram', predicate: 'email', object: 'vikram@rishtedar.cl', confidence: 0.95 }
+    ],
+    relationships: [],
+    commitments: []
+  });
+  // Jarvis se descarta como entidad (self), WhatsApp y Vikram quedan
+  assert.equal(graph.findEntities({ name: 'Jarvis' }).length, 0);
+  // Solo el hecho duradero (email) sobrevive; los efímeros/auto-claim se filtran
+  assert.equal(result.facts, 1);
+  const stats = graph.stats();
+  assert.equal(stats.facts, 1);
+});
+
+test('prune elimina hechos efímeros viejos y entidades huérfanas, conserva lo verificado', () => {
+  const dir = tempDataDir();
+  const graph = new KnowledgeGraph({ dataDir: dir });
+  const ent = graph.upsertEntity('person', 'Vikram');
+  const verified = graph.addFact(ent.id, 'email', 'v@x.cl');
+  graph.addFact(ent.id, 'email', 'v@x.cl'); // segunda observación → verified
+  const weak = graph.addFact(ent.id, 'humor', 'bueno', { confidence: 0.5, state: 'candidate' });
+  const orphan = graph.upsertEntity('concept', 'algo suelto viejo');
+
+  // Envejecer artificialmente el hecho débil y la entidad huérfana
+  const raw = JSON.parse(fs.readFileSync(path.join(dir, 'memory', 'graph.json'), 'utf-8'));
+  const old = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
+  for (const f of raw.facts) if (f.id === weak.id) f.updatedAt = old;
+  for (const e of raw.entities) if (e.id === orphan.id) e.updatedAt = old;
+  fs.writeFileSync(path.join(dir, 'memory', 'graph.json'), JSON.stringify(raw));
+
+  const res = graph.prune();
+  assert.ok(res.removedFacts >= 1);
+  assert.ok(res.removedEntities >= 1);
+  // El hecho verificado sobrevive
+  const profile = graph.getEntityProfile(ent.id);
+  assert.ok(profile.facts.some((f) => f.id === verified.id));
+});
+
 test('storeExtraction deposita el JSON del modelo en el grafo', () => {
   const graph = new KnowledgeGraph({ dataDir: tempDataDir() });
   const result = storeExtraction(graph, {
@@ -132,5 +203,43 @@ test('graph_query y graph_remember quedan registradas como tools', () => {
   assert.ok(names.includes('memory.graph_query'));
   assert.ok(names.includes('memory.graph_remember'));
   assert.ok(names.includes('memory.commitments'));
+  assert.ok(names.includes('memory.correct'));
   assert.ok(runtime.knowledgeGraph);
+});
+
+test('setFactState descarta o corrige un hecho sin perder historial', () => {
+  const graph = new KnowledgeGraph({ dataDir: tempDataDir() });
+  const v = graph.upsertEntity('person', 'Vikram');
+  const fact = graph.addFact(v.id, 'email', 'viejo@rishtedar.cl', { state: 'verified' });
+
+  const rejected = graph.setFactState(fact.id, 'rejected');
+  assert.equal(rejected.state, 'rejected');
+  assert.equal(graph.getEntityProfile(v.id).facts.length, 0);
+
+  assert.equal(graph.setFactState('fact_no_existe', 'rejected'), null);
+});
+
+test('memory.correct: busca candidatos y luego corrige un hecho del grafo', async () => {
+  const { createRuntime } = require('../src/app-runtime');
+  const runtime = createRuntime({ dataDir: tempDataDir(), agents: { autoStart: false } });
+  const v = runtime.knowledgeGraph.upsertEntity('person', 'Vikram');
+  const fact = runtime.knowledgeGraph.addFact(v.id, 'email', 'viejo@rishtedar.cl', { state: 'verified' });
+
+  const correct = runtime.toolRegistry.get('memory.correct');
+  const found = await correct.execute({ query: 'Vikram' });
+  assert.ok(found.facts.some((f) => f.id === fact.id));
+
+  const result = await correct.execute({
+    id: fact.id,
+    source: 'fact',
+    action: 'replace',
+    correction: { object: 'nuevo@rishtedar.cl' }
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.replacement.object, 'nuevo@rishtedar.cl');
+  assert.equal(result.replacement.state, 'verified');
+
+  const profile = runtime.knowledgeGraph.getEntityProfile(v.id);
+  assert.equal(profile.facts.length, 1);
+  assert.equal(profile.facts[0].object, 'nuevo@rishtedar.cl');
 });

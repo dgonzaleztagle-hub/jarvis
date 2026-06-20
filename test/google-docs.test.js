@@ -55,8 +55,8 @@ test('google.docs.create_document con content literal lo usa directo (sin llamar
 test('google.docs.create_document con brief genera el contenido por dentro con el modelo activo', async () => {
   const modelProvider = {
     generateText: async ({ maxTokens }) => {
-      assert.equal(maxTokens, 6000);
-      return { text: '# Informe\nContenido generado por el modelo.' };
+      assert.equal(maxTokens, 8192);
+      return { text: '# Informe\nContenido generado por el modelo.', stopReason: 'end_turn' };
     }
   };
   const tool = getTool(modelProvider);

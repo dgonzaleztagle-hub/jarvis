@@ -271,7 +271,7 @@ class AnthropicProvider {
 
     const usage = this.estimateCost(data.usage || {});
     this.usageMeter?.record({ provider: 'anthropic', model: this.model, purpose, durationMs, ...usage });
-    return { model: this.model, usage, durationMs, text };
+    return { model: this.model, usage, durationMs, stopReason: data.stop_reason || null, text };
   }
 }
 

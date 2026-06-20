@@ -7,7 +7,7 @@ const { VOICE_PROFILES } = require('./voice/edge-tts-provider');
 const { getWeather }     = require('./connectors/weather');
 const { searchYoutube } = require('./connectors/youtube');
 
-const runtime = createRuntime();
+const runtime = createRuntime({ google: { allowLegacyFallback: true } });
 
 // Último archivo que se pidió mostrar en el HUD. SSE es fire-and-forget: si el
 // HUD no está conectado en el instante exacto del evento (o reconecta), se
@@ -374,6 +374,36 @@ async function router(req, res) {
       return sendJson(res, 200, { task: completed });
     }
 
+    // Endpoint de chunks de audio de reunión: el browser envía cada fragmento
+    // grabado (base64 WebM/Opus), se transcribe con Gemini y se emite al HUD.
+    if (req.method === 'POST' && url.pathname === '/meeting/chunk') {
+      const { getSession: getActiveSession } = require('./meeting/meeting-session');
+      const { transcribeChunk } = require('./meeting/meeting-stt');
+      const session = getActiveSession();
+      if (!session || !session.isActive) {
+        return sendJson(res, 409, { error: 'MEETING_NOT_ACTIVE' });
+      }
+      const body = await readJson(req);
+      const { audioBase64, mimeType = 'audio/webm;codecs=opus' } = body;
+      if (!audioBase64) return sendJson(res, 400, { error: 'MISSING_AUDIO' });
+      try {
+        const apiKey = runtime.credentialVault.get('GEMINI_API_KEY');
+        const text = await transcribeChunk({ audioBase64, mimeType, apiKey });
+        if (text) {
+          const chunk = session.addChunk(text);
+          runtime.eventBus.emit('meeting_transcript_update', {
+            id: session.id,
+            chunk: chunk.index,
+            text: chunk.text,
+            timestamp: chunk.timestamp
+          });
+        }
+        return sendJson(res, 200, { ok: true, text: text || '' });
+      } catch (err) {
+        return sendJson(res, 500, { error: err.message });
+      }
+    }
+
     if (req.method === 'POST' && url.pathname === '/chat') {
       const body = await readJson(req);
       const task = await runtime.conversationRuntime.handleMessage({
@@ -450,6 +480,22 @@ async function router(req, res) {
       const body = await readJson(req);
       const result = runtime.importLegacyCredentials(body || {});
       return sendJson(res, 200, result);
+    }
+
+    if (req.method === 'POST' && url.pathname === '/credentials/respond') {
+      const body = await readJson(req);
+      const { resolveRequest, cancelRequest, listPending } = require('./connectors/pending-credentials');
+      if (body.cancel) {
+        const cancelled = cancelRequest(body.requestId);
+        return sendJson(res, 200, { ok: cancelled });
+      }
+      const resolved = resolveRequest(body.requestId, body.values || {});
+      return sendJson(res, resolved ? 200 : 404, { ok: resolved });
+    }
+
+    if (req.method === 'GET' && url.pathname === '/credentials/pending') {
+      const { listPending } = require('./connectors/pending-credentials');
+      return sendJson(res, 200, { pending: listPending() });
     }
 
     if (req.method === 'GET' && url.pathname === '/channels/telegram/status') {

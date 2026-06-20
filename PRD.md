@@ -3,7 +3,7 @@
 > **Versión consolidada.** Este archivo reemplaza los ~40 documentos fragmentados anteriores.  
 > Todo cambio de visión, decisión técnica o roadmap se edita aquí.  
 > Los archivos en `docs/` son referencia histórica/legacy — si contradicen este PRD, manda el PRD.
-> Última actualización: 2026-06-10 (agentes v1, SLOs de latencia, gobernanza de costos, builder en Fase 8).
+> Última actualización: 2026-06-18 (Social Hub 4 plataformas, Video Pipeline 16 templates + video.compose, Memoria Externa Sheets, WhatsApp reactive, Módulo reuniones).
 
 ---
 
@@ -70,7 +70,17 @@ Detalle operativo por vertical (necesidades, fuentes preferidas, riesgos) en [do
 | HUD modular | Interfaz visual tipo Iron Man — paneles que aparecen/desaparecen, no apilados. |
 | Telegram | Canal paralelo desde el celular: texto, fotos/documentos a la bandeja local, y **espejo de voz** (nota de voz entra → nota de voz sale). |
 
-### P1 — Siguiente iteración
+### P1 — Implementados (ciclo 2026-06)
+
+| Capacidad | Descripción |
+|---|---|
+| **Reuniones** ✅ | `meeting.start/stop/status` — grabación en HUD (WebM/Opus, chunks 8s), STT Gemini inline, minuta estructurada → Google Doc automático. |
+| **WhatsApp reactive** ✅ | `wa.start_watching / wa.stop_watching` — Jarvis escucha mensajes entrantes y responde automáticamente (grupos excluidos, filtro opcional por contacto). |
+| **Publicación redes sociales** ✅ | `social.*` — Hub multi-plataforma: Meta (FB+IG), TikTok, LinkedIn, YouTube. JIT onboarding por plataforma. Post inmediato y programado. |
+| **Pipeline de video** ✅ | `video.*` — capa base (ffmpeg: corte silencios, info, subtítulos, voiceover mixer; Gemini STT; Pexels stock footage); capa break-glass (Remotion: 16 plantillas con spring physics — KineticText, DataViz, Testimonial, CodeExplainer, MarketingReel compositor, etc.). `video.compose` orquesta el pipeline completo. |
+| **Memoria externa** ✅ | `memory.*` — Google Sheet en Drive del usuario como respaldo remoto. Tabs: Proyectos, Contactos, Decisiones, Corridas. Append-safe, editable manualmente. |
+
+### P1 — Pendiente
 
 | Capacidad | Descripción |
 |---|---|
@@ -79,11 +89,9 @@ Detalle operativo por vertical (necesidades, fuentes preferidas, riesgos) en [do
 | Reportes | Genera reportes estructurados en Google Docs/Sheets. |
 | Control de navegador | Navega, llena formularios, extrae información. |
 | Desktop automation | Abre apps, controla ventanas, OCR de pantalla. |
-| Struggle detection | Detecta cuando el usuario está atascado y ofrece ayuda proactiva. |
 | Deep research | Investigación en profundidad con múltiples fuentes. |
 | YouTube | Busca y abre videos por nombre/tema. |
 | Archivos locales | Busca, mueve, organiza archivos. |
-| Notetaker de reuniones | Bot que entra al Meet/Zoom, transcribe, genera minuta y acuerdos en Docs. |
 
 ### P2 — Futuro
 
@@ -560,6 +568,15 @@ src/connectors/
   google-gmail.js
   google-docs.js
   google-contacts.js
+  google-sheets.js
+  google-drive.js
+  social-hub.js       Hub multi-plataforma (despacha a social/)
+  social/meta.js      Meta Graph API (FB + IG)
+  social/tiktok.js    TikTok API
+  social/linkedin.js  LinkedIn UGC Post API
+  social/youtube.js   YouTube Data API v3 (usa googleAuthFactory)
+  video-pipeline.js   ffmpeg + Gemini STT + Pexels + Remotion (16 plantillas)
+  sheets-memory.js    Memoria externa en Drive del usuario
 
 src/voice/
   edge-tts-provider.js
@@ -610,7 +627,7 @@ Formato no es decoración — es parte del contrato de cada respuesta. Reglas ap
   - `response`: respuesta directa.
   - Si el runtime promete "resumen" pero solo hay texto extraído, debe llamarse vista previa/extracto, no resumen.
 - **Triage**: si el usuario pregunta por valor, prioridad, spam, riesgo o "necesita acción", Jarvis clasifica (tipo, nivel de atención, motivo, acción sugerida) separando hechos observados de inferencia — no solo describe.
-- **Confirmaciones como estado, no conversación libre**: una acción riesgosa en `waiting_confirmation` se resuelve por el runtime (reanuda esa tarea), no por el modelo creando una acción nueva. Respuestas cortas (`sí`, `dale`, `confirmo`) confirman la tarea pendiente más reciente y visible donde el usuario está mirando — sin doble confirmación ni loops.
+- **Confirmaciones como estado, no conversación libre**: una acción riesgosa en `waiting_confirmation` se resuelve por el runtime (reanuda esa tarea), no por el modelo creando una acción nueva. Con UNA sola pendiente, respuestas cortas (`sí`, `dale`, `confirmo`) la confirman directo (atajo determinista, sin pasar por el modelo). Con 2+ pendientes (de cualquier herramienta), el atajo no adivina: cada turno arma un bloque `[Acciones pendientes de confirmación]` con id + datos de todas, y el modelo resuelve la que corresponda con `tasks.confirm_pending`/`tasks.cancel_pending`. El auto-supersede solo aplica a duplicados EXACTOS (mismo tool + mismos inputs) — una pendiente distinta nunca se cancela en silencio.
 - **Fallo de modelo ≠ fallo de formato**: si el modelo responde texto útil fuera del JSON esperado, el runtime intenta rescatarlo y responder, en vez de reportar "no pude contactar el modelo". Solo se reporta caída real ante fallo de red/cuota/credencial.
 
 ---
@@ -665,10 +682,17 @@ Formato no es decoración — es parte del contrato de cada respuesta. Reglas ap
 - [ ] Skill registry con lifecycle completo, procedural memory
 - [~] Ruteo de modelos por tipo de tarea (barato conversa, fuerte construye): **infraestructura hecha** — catálogo por tier (`src/model/model-catalog.js`: Gemini Flash free / Haiku / Sonnet fuerte recomendado / Opus no-recomendado), swap en caliente dentro de un ecosistema (`model.set_active`, `GET/POST /model/active`), cruce de proveedor = onboarding. Principio: recomendar el modelo MEDIO capaz (Sonnet), no el tope. **Falta** la capa de comportamiento: disclaimer calibrado antes + recomendación REACTIVA de subir de tier cuando el usuario se queja (ver memoria estrategia de modelos)
 
+### Fase 4b — Contenido y Redes Sociales (ADELANTADA) ✅
+- [x] **Módulo de reuniones** — `meeting.start/stop/status`, grabación HUD, STT Gemini, minuta → Google Docs. Micrófono del PC, no bot externo.
+- [x] **WhatsApp reactive** — modo escucha `wa.start_watching`, respuesta automática a mensajes directos con filtro por contacto
+- [x] **Social Media hub** — `social.*`, Meta (FB+IG) + TikTok + LinkedIn + YouTube, JIT onboarding, posts inmediatos y programados
+- [x] **Pipeline de video** — `video.*`, 11 tools: ffmpeg (silencios, info, subtítulos, voiceover mixer), Gemini STT, Pexels footage, Remotion break-glass (16 plantillas con spring physics: KineticText word-stagger, DataViz bar chart, Testimonial type-on, CodeExplainer terminal, MarketingReel compositor multi-escena, etc.), `video.compose` orquesta todo
+- [x] **Memoria externa** — `memory.*`, Google Sheet en Drive del usuario (Proyectos/Contactos/Decisiones/Corridas), append-safe
+
 ### Fase 5 — Investigación y Reportes
 - Web research con fuentes verificadas
 - SEO audit (tool base ya existe: web.audit_seo), reportes exportables
-- **Notetaker de reuniones** (bot Meet/Zoom: transcripción + minuta + acuerdos)
+- **Notetaker de reuniones** (bot Meet/Zoom: transcripción + minuta + acuerdos) — distinto al módulo ya hecho (que graba el micro del PC)
 
 ### Fase 6 — Conectores externos
 - Notion, n8n/Make, CRMs, Analytics, WordPress, Shopify (vía MCP — ver 11b)

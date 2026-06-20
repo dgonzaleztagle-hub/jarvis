@@ -42,9 +42,10 @@ function createGoogleAuthFactory(options = {}) {
   const CODEX_REDIRECT_URI = `http://localhost:${process.env.PORT || 3417}/auth/google/callback`;
 
   // El archivo legacy del companion es SOLO semilla de migración para desarrollo.
-  // En producción no existe: el vault es la única fuente. Gateable para no
-  // resucitar cuentas viejas tras un disconnect (cambio de cuenta personal->empresa).
-  const allowLegacyFallback = options.allowLegacyFallback !== false;
+  // En producción no existe: el vault es la única fuente. Opt-in explícito (server.js
+  // lo activa) para que tests con dataDir temporal no dependan de tokens reales de
+  // otro proyecto en la máquina del dev.
+  const allowLegacyFallback = options.allowLegacyFallback === true;
   const DISCONNECT_KEY = 'GOOGLE_AUTH_DISCONNECTED';
 
   // Estado de salud de la auth. needsReauth = el refresh_token está revocado y

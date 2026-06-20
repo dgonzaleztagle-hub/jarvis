@@ -3,6 +3,7 @@ import { api } from './api.js';
 import { addMessage } from './feed.js';
 import { confirmPendingTask } from './tasks.js';
 import * as FloatingPanel from './floating-panel.js';
+import { renderKnowledgeGraph } from './graph-panel.js';
 
 /* ─── ARTIFACT STATE ────────────────────────────────────────────────────────── */
 export const artifactState = { current: null };
@@ -25,7 +26,8 @@ export const ARTIFACT_DEFS = {
   agenda:   { title:'AGENDA',   icon:'📅', dock:'dockAgenda',  load:loadAgendaData,   render:renderAgenda   },
   emails:   { title:'CORREOS',  icon:'✉',  dock:'dockEmails',  load:loadEmailsData,   render:renderEmails   },
   memory:   { title:'MEMORIA',  icon:'🧠', dock:'dockMemoria', load:loadMemoryData,   render:renderMemory   },
-  approval: { title:'PERMISOS', icon:'🔐', dock:'dockPermisos',load:loadApprovalData, render:renderApproval }
+  approval: { title:'PERMISOS', icon:'🔐', dock:'dockPermisos',load:loadApprovalData, render:renderApproval },
+  meeting:  { title:'REUNIÓN',  icon:'🎙', dock:null,          load:loadMeetingData,  render:renderMeeting  }
 };
 
 export async function openArtifact(type, { float = false } = {}) {
@@ -101,7 +103,15 @@ export function openArtifactModal(title) {
 
 export function closeArtifactModal() {
   dom.artifactModal.classList.remove('open');
+  dom.artifactModal.classList.remove('graph-modal-open');
   setTimeout(()=>{ dom.artifactModalBody.innerHTML=''; },250);
+}
+
+export async function openGraphModal() {
+  openArtifactModal('🕸 GRAFO DE CONOCIMIENTO');
+  dom.artifactModal.classList.add('graph-modal-open');
+  dom.artifactModalBody.innerHTML = '<div class="fp-loading">Cargando grafo…</div>';
+  await renderKnowledgeGraph(dom.artifactModalBody);
 }
 
 /* ─── AGENDA RENDERER ───────────────────────────────────────────────────────── */
@@ -290,6 +300,9 @@ function renderMemory(data) {
   const wrap=el('div','memory-artifact');
   const hdr=el('div','artifact-header-row');
   hdr.appendChild(el('span','artifact-count',records.length?`${records.length} REGISTRO${records.length!==1?'S':''}` :'VACÍO'));
+  const graphBtn=el('button','artifact-action-btn','🕸 Grafo');
+  graphBtn.addEventListener('click', () => { openGraphModal().catch(() => {}); });
+  hdr.appendChild(graphBtn);
   wrap.appendChild(hdr);
   if (!records.length) {
     const ph=el('div','artifact-placeholder'); ph.innerHTML='<span class="art-icon">🧠</span><span>Sin memorias registradas todavía.</span>'; wrap.appendChild(ph); dom.workspaceContent.appendChild(wrap); return;
@@ -529,4 +542,117 @@ export async function loadMemoryData() {
 
 export async function loadApprovalData() {
   return api('/tasks').catch(err=>({error:err.message,tasks:[]}));
+}
+
+/* ─── MEETING ARTIFACT ──────────────────────────────────────────────────────── */
+
+// Estado del panel de reunión — actualizado en tiempo real por SSE.
+export const meetingPanelState = {
+  active: false,
+  title: '',
+  chunks: [],         // [{ index, text, timestamp }]
+  minutes: null,      // minuta final una vez terminada la reunión
+  docUrl: null,
+  container: null     // referencia DOM al panel activo
+};
+
+export async function loadMeetingData() {
+  return { ...meetingPanelState };
+}
+
+export function renderMeeting(data, container) {
+  meetingPanelState.container = container;
+  container.innerHTML = '';
+  container.style.cssText = 'padding:12px;font-family:monospace;font-size:13px;';
+
+  if (data.minutes) {
+    renderMeetingMinutes(data.minutes, data.docUrl, container);
+    return;
+  }
+
+  // Panel en vivo
+  const header = document.createElement('div');
+  header.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:10px;';
+  const dot = document.createElement('span');
+  dot.id = 'mtg-rec-dot';
+  dot.style.cssText = 'width:10px;height:10px;border-radius:50%;background:#e84040;display:inline-block;animation:pulse 1s infinite;';
+  const title = document.createElement('span');
+  title.style.cssText = 'color:var(--c-hi,#7ca4f4);font-weight:700;font-size:14px;';
+  title.textContent = data.title || 'Reunión en curso';
+  header.append(dot, title);
+  container.appendChild(header);
+
+  // Pulse animation
+  const style = document.createElement('style');
+  style.textContent = '@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}';
+  container.appendChild(style);
+
+  const transcriptEl = document.createElement('div');
+  transcriptEl.id = 'mtg-transcript';
+  transcriptEl.style.cssText = 'max-height:480px;overflow-y:auto;color:var(--c-fg,#c8d0e0);line-height:1.6;white-space:pre-wrap;';
+
+  const emptyMsg = document.createElement('span');
+  emptyMsg.id = 'mtg-empty';
+  emptyMsg.style.cssText = 'color:var(--c-dim,#4a5568);font-style:italic;';
+  emptyMsg.textContent = 'Escuchando…';
+  transcriptEl.appendChild(emptyMsg);
+
+  // Render existing chunks
+  (data.chunks || []).forEach((c) => appendChunkToPanel(c, transcriptEl));
+
+  container.appendChild(transcriptEl);
+}
+
+export function appendChunkToPanel(chunk, transcriptEl) {
+  const el = transcriptEl || document.getElementById('mtg-transcript');
+  if (!el) return;
+  const empty = el.querySelector('#mtg-empty');
+  if (empty) empty.remove();
+
+  const p = document.createElement('p');
+  p.style.cssText = 'margin:0 0 6px;padding:4px 6px;border-left:2px solid var(--c-border,#2a3348);';
+
+  // Highlight markers
+  const text = chunk.text
+    .replace(/\[DECISIÓN: ([^\]]+)\]/g, '<mark style="background:#1e3a1e;color:#6fcf6f;padding:0 3px;">⚡ $1</mark>')
+    .replace(/\[COMPROMISO de ([^\]]+): ([^\]]+)\]/g, '<mark style="background:#1e1e3a;color:#9ab4f8;padding:0 3px;">🤝 $1: $2</mark>')
+    .replace(/\[CIFRA: ([^\]]+)\]/g, '<mark style="background:#2a1e1e;color:#f4a0a0;padding:0 3px;">📊 $1</mark>');
+  p.innerHTML = text;
+  el.appendChild(p);
+  el.scrollTop = el.scrollHeight;
+}
+
+function renderMeetingMinutes(minutes, docUrl, container) {
+  const h = (tag, text, style = '') => {
+    const e = document.createElement(tag);
+    if (style) e.style.cssText = style;
+    e.textContent = text;
+    return e;
+  };
+  container.appendChild(h('div', 'Minuta generada', 'color:var(--c-hi,#7ca4f4);font-weight:700;font-size:14px;margin-bottom:10px;'));
+  if (minutes.summary) {
+    container.appendChild(h('p', minutes.summary, 'color:var(--c-fg,#c8d0e0);margin-bottom:10px;'));
+  }
+  const sections = [
+    { label: 'Decisiones', items: minutes.decisions },
+    { label: 'Temas', items: minutes.topics },
+    { label: 'Tareas', items: (minutes.actionItems || []).map((a) => `${a.task}${a.owner ? ` → ${a.owner}` : ''}`) }
+  ];
+  for (const { label, items } of sections) {
+    if (!items?.length) continue;
+    container.appendChild(h('div', label, 'color:var(--c-dim,#8896b0);font-size:11px;letter-spacing:1px;margin:8px 0 4px;'));
+    items.forEach((item) => {
+      const li = document.createElement('div');
+      li.style.cssText = 'padding:3px 0 3px 10px;border-left:2px solid var(--c-border,#2a3348);color:var(--c-fg,#c8d0e0);margin-bottom:4px;';
+      li.textContent = item;
+      container.appendChild(li);
+    });
+  }
+  if (docUrl) {
+    const a = document.createElement('a');
+    a.href = docUrl; a.target = '_blank'; a.rel = 'noreferrer noopener';
+    a.style.cssText = 'display:block;margin-top:14px;color:var(--c-hi,#7ca4f4);font-size:12px;';
+    a.textContent = 'Ver minuta completa en Google Docs →';
+    container.appendChild(a);
+  }
 }

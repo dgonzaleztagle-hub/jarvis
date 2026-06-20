@@ -6,7 +6,7 @@
 // Tier 2 (~2800 chars) — selective: domain knowledge matching current intent
 // Working             — last 2 turns from working memory
 
-const CHAR_BUDGET = { tier0: 1100, tier1: 1400, tier2: 2800, total: 5300 };
+const CHAR_BUDGET = { capabilities: 2200, tier0: 1100, tier1: 1400, tier2: 2800, total: 7000 };
 
 const { formatForUser } = require('../utils/time');
 
@@ -79,21 +79,21 @@ function formatRecord(record) {
   return `[${record.type}] ${title}: ${body}`;
 }
 
-function buildTier0Lines(store) {
-  const lines = [];
-
-  // Self-knowledge: assistant capabilities — always included so the model knows what it can do
-  const selfKnowledge = store.list({ type: 'assistant_self_knowledge' })
+function buildCapabilitiesBlock(store) {
+  const record = store.list({ type: 'assistant_self_knowledge' })
     .filter((r) => r.state === 'verified')
     .slice(0, 1)
     .map((r) => store.get(r.id))
-    .filter(Boolean);
-  for (const r of selfKnowledge) {
-    const groups = (r.content?.capabilityGroups || [])
-      .map((g) => `${g.name}: ${g.actions.slice(0, 4).join('; ')}`)
-      .join('\n');
-    if (groups) lines.push(`[capacidades]\n${groups}`);
-  }
+    .filter(Boolean)[0];
+  if (!record) return '';
+  const groups = (record.content?.capabilityGroups || [])
+    .map((g) => `${g.name}: ${g.actions.join('; ')}`)
+    .join('\n');
+  return groups ? `[capacidades]\n${groups}` : '';
+}
+
+function buildTier0Lines(store) {
+  const lines = [];
 
   // Identity: high-confidence business_context + user identity
   const identity = store.list({ type: 'business_context' })
@@ -188,6 +188,14 @@ class ContextAssembler {
 
     const sections = [`[contexto]\n${dateHeader}`];
     let budget = CHAR_BUDGET.total - dateHeader.length;
+
+    // Capacidades propias: sección dedicada, no compite con tier0
+    const capBlock = buildCapabilitiesBlock(this.store);
+    if (capBlock) {
+      const allowed = capBlock.slice(0, CHAR_BUDGET.capabilities);
+      sections.push(allowed);
+      budget -= allowed.length;
+    }
 
     // Tier 0
     const tier0Lines = buildTier0Lines(this.store);

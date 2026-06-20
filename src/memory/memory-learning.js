@@ -55,6 +55,39 @@ function evidenceGroundedInUser(item, userText) {
   return normalizeForMatch(userText).includes(evidence.slice(0, 60));
 }
 
+// Nombres propios / identificadores (clientes, proyectos, dominios) que
+// aparecen en el `content` extraído. El extractor trabaja con contexto
+// limitado y puede "completar" un nombre plausible desde su conocimiento
+// general (ej: un cliente conocido de Daniel) en vez del que realmente
+// está activo en esta conversación.
+function extractProperNouns(value, out = new Set()) {
+  if (typeof value === 'string') {
+    for (const m of value.matchAll(/\b[A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,}\b/g)) out.add(m[0]);
+    for (const m of value.matchAll(/\b[a-z0-9-]+\.(?:cl|com|net|org|io|app)\b/gi)) out.add(m[0]);
+  } else if (Array.isArray(value)) {
+    for (const v of value) extractProperNouns(v, out);
+  } else if (value && typeof value === 'object') {
+    for (const v of Object.values(value)) extractProperNouns(v, out);
+  }
+  return out;
+}
+
+// Invariante de procedencia para entidades: cualquier nombre propio/dominio
+// que el item introduzca en su `content` debe poder rastrearse al contexto
+// real de la conversación (lo que dijo el usuario en este turno o en los
+// turnos recientes), no solo a "conocimiento general" del modelo. Si el
+// extractor etiqueta el contenido con un cliente/proyecto que no aparece en
+// ningún lado del contexto, no hay forma de saber si es el correcto.
+function contentGroundedInContext(item, contextText) {
+  const nouns = extractProperNouns(item.content);
+  if (nouns.size === 0) return true;
+  const haystack = normalizeForMatch(contextText);
+  for (const noun of nouns) {
+    if (!haystack.includes(normalizeForMatch(noun))) return false;
+  }
+  return true;
+}
+
 function hasMeaningfulContent(value) {
   if (value === null || value === undefined) return false;
   if (typeof value === 'string') return value.trim().length > 0;
@@ -182,7 +215,7 @@ function inferBehaviorLessonHeuristics(text = '') {
   return items;
 }
 
-async function extractMemoriesWithModel({ userText, assistantResult, toolResults, modelProvider, existingKeys = [] }) {
+async function extractMemoriesWithModel({ userText, assistantResult, toolResults, modelProvider, existingKeys = [], recentHistory = '' }) {
   if (!modelProvider?.generateJson) return [];
 
   // Skip extraction for trivial inputs — confirmations, one-word replies, etc.
@@ -213,6 +246,8 @@ Devuelve exclusivamente JSON válido:
 
 REGLA DE PROCEDENCIA (crítica): "evidence" debe ser una cita literal de lo que escribió el USUARIO en este turno. Lo que respondió el asistente NO es evidencia de nada: el asistente puede equivocarse, y memorizar sus propias afirmaciones convierte un error en "hecho". Si un item solo se sustenta en lo que dijo el asistente, NO lo incluyas.
 
+REGLA DE ENTIDADES (crítica): si "content" nombra un cliente, proyecto, dominio o persona, ese nombre debe aparecer textualmente en "userText" o en "[contexto reciente]" de abajo. NO completes el nombre desde tu conocimiento general de los clientes/proyectos de Daniel — si el turno habla de "la página"/"el resultado"/"eso" sin nombrar el proyecto, usa una clave/título genéricos (sin nombre de cliente) en vez de adivinar a cuál de los proyectos de Daniel se refiere.
+
 QUÉ SÍ guardar (conocimiento duradero y reutilizable):
 - Datos de contacto declarados por el usuario (nombre, email, relación)
 - Preferencias explícitas del usuario sobre comportamiento, formato, herramientas
@@ -241,6 +276,7 @@ Máximo 3 items. Si no hay nada que valga la pena guardar, devuelve items: [].`,
           text: JSON.stringify({
             userText,
             intent,
+            recentHistory: recentHistory.slice(0, 600),
             assistantSpeak: assistantResult?.speak?.slice(0, 200) || '',
             toolsUsed: (toolResults || []).map((item) => item.toolName)
           })
@@ -255,7 +291,7 @@ Máximo 3 items. Si no hay nada que valga la pena guardar, devuelve items: [].`,
   return Array.isArray(extraction.data?.items) ? extraction.data.items : [];
 }
 
-async function learnFromConversationTurn({ userText, assistantResult, toolResults, memoryStore, modelProvider }) {
+async function learnFromConversationTurn({ userText, assistantResult, toolResults, memoryStore, modelProvider, recentHistory = '' }) {
   const intent = inferMemoryIntent(userText);
 
   // Heuristics still fire for explicit correction patterns — they're fast and precise
@@ -272,19 +308,24 @@ async function learnFromConversationTurn({ userText, assistantResult, toolResult
       assistantResult,
       toolResults,
       modelProvider,
-      existingKeys
+      existingKeys,
+      recentHistory
     });
   } catch (_) {
     modelItems = [];
   }
 
   // Las heurísticas son regex sobre las palabras del usuario: nacen grounded.
-  // Lo extraído por modelo debe demostrar procedencia (invariante 2).
+  // Lo extraído por modelo debe demostrar procedencia (invariante 2) y, si
+  // nombra entidades (cliente/proyecto/dominio), procedencia de entidad
+  // (invariante 3: el nombre debe rastrearse al contexto real, no inventarse).
   const groundedHeuristics = [...heuristicItems, ...heuristicLessons];
+  const contextText = `${userText} ${recentHistory} ${assistantResult?.speak || ''}`;
   const provenanceChecked = modelItems.map((item) => {
-    if (evidenceGroundedInUser(item, userText)) return item;
-    // Sin evidencia en las palabras del usuario: nunca 'verified'. Queda como
-    // candidato de baja confianza que el usuario puede confirmar después.
+    if (evidenceGroundedInUser(item, userText) && contentGroundedInContext(item, contextText)) return item;
+    // Sin evidencia en las palabras del usuario, o con una entidad inventada:
+    // nunca 'verified'. Queda como candidato de baja confianza que el usuario
+    // puede confirmar después.
     return {
       ...item,
       state: 'candidate',

@@ -76,6 +76,16 @@ class ToolRegistry {
       };
     }
 
+    // Hook de preparación (opcional en el tool): enriquece el input ANTES de la
+    // confirmación para que el usuario vea datos reales (ej. destinatario resuelto)
+    // en lugar del string crudo. Corre también en la ejecución confirmada.
+    if (typeof tool.prepare === 'function') {
+      try {
+        const prepared = await tool.prepare(normalizedInput, context);
+        if (prepared && typeof prepared === 'object') Object.assign(normalizedInput, prepared);
+      } catch (_) { /* best-effort; si prepare falla, continúa con el input original */ }
+    }
+
     // Procedencia del contenido (¿lo dictó el usuario o lo compuso el LLM?). Se
     // calcula ANTES de la política para que ésta pueda regir la confirmación de
     // las herramientas de envío por autoría, no solo por riesgo. Ver provenance.js.
