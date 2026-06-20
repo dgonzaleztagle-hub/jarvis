@@ -201,6 +201,7 @@ function createRuntime(options = {}) {
     description: 'Review a memory record and change its state.',
     risk: 'medium',
     permissions: ['memory:review'],
+    required: ['id', 'state'],
     execute: async (input) => memoryStore.updateState(input.id, input.state, input.patch || {})
   });
 

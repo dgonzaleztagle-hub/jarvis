@@ -92,6 +92,7 @@ function createAgentTools({ store, scheduler }) {
       description: 'Eliminar un agente definitivamente por id o nombre. Input: { agent }.',
       risk: 'high',
       permissions: ['agents:manage'],
+      required: ['agent'],
       execute: async (input) => store.remove(String(input.agent || ''))
     }
   ];

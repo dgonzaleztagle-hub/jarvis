@@ -71,6 +71,7 @@ function createWhatsAppTools({ channel }) {
       risk: 'high',
       outbound: true,
       permissions: ['whatsapp:send'],
+      required: ['to', 'message'],
       // Resuelve el destinatario ANTES de la confirmación: el usuario ve el nombre
       // y número real en el diálogo de confirmación, no el string crudo del modelo.
       prepare: async (input) => {

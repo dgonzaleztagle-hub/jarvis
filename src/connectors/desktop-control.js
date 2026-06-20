@@ -132,6 +132,7 @@ function createDesktopTools() {
       description: 'Traer al frente una ventana abierta de la máquina local, buscándola por título o nombre de proceso (ej: "chrome", "word", "rishtedar"). Input: { query }. Resuelve pedidos como "enfoca la ventana donde tengo X". Solo Windows.',
       risk: 'high',
       permissions: ['desktop:control'],
+      required: ['query'],
       execute: async (input) => focusWindow(input.query)
     },
     {
@@ -139,6 +140,7 @@ function createDesktopTools() {
       description: 'Abrir una aplicación de la máquina local por nombre o ruta de ejecutable (ej: "notepad", "calc", "spotify"). Input: { name }. Solo Windows.',
       risk: 'high',
       permissions: ['desktop:control'],
+      required: ['name'],
       execute: async (input) => launch(input.name)
     },
     {
@@ -146,6 +148,7 @@ function createDesktopTools() {
       description: 'Abrir una URL en el navegador por defecto de la máquina local (pestaña nueva). Input: { url } (debe ser http/https). Solo Windows.',
       risk: 'medium',
       permissions: ['desktop:control'],
+      required: ['url'],
       execute: async (input) => openUrl(input.url)
     }
   ];
