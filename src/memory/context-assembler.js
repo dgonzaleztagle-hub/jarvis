@@ -17,7 +17,8 @@ const DOMAIN_PATTERNS = {
   tasks:    /tarea|pendiente|lista|completar|to.?do/i,
   contacts: /contacto|tel[eé]fono|llamar|cliente|proveedor/i,
   docs:     /documento|\bdoc\b|informe|reporte|redactar/i,
-  business: /negocio|empresa|rubro|factura|precio|producto|servicio|venta/i
+  business: /negocio|empresa|rubro|factura|precio|producto|servicio|venta/i,
+  marketing: /marketing|campa[ñn]a|marca|brand|copy|contenido|publicar|post|reel|landing|anuncio|publicidad|redes sociales|instagram|tiktok|newsletter|seo|audiencia|p[uú]blico objetivo/i
 };
 
 function detectDomains(text) {
@@ -172,10 +173,14 @@ function buildTier2Lines(store, domains, query) {
 }
 
 class ContextAssembler {
-  constructor({ memoryStore, workingMemoryStore, knowledgeGraph } = {}) {
+  constructor({ memoryStore, workingMemoryStore, knowledgeGraph, getBrandProfile, formatBrandProfile } = {}) {
     this.store = memoryStore;
     this.workingStore = workingMemoryStore;
     this.graph = knowledgeGraph || null;
+    // Proveedor de la marca activa (perfil + formateador). Solo se inyecta el
+    // bloque de marca en turnos de marketing/contenido — no en cada turno.
+    this.getBrandProfile = typeof getBrandProfile === 'function' ? getBrandProfile : null;
+    this.formatBrandProfile = typeof formatBrandProfile === 'function' ? formatBrandProfile : null;
   }
 
   assemble({ userText = '', recentHistory = '' } = {}) {
@@ -195,6 +200,22 @@ class ContextAssembler {
       const allowed = capBlock.slice(0, CHAR_BUDGET.capabilities);
       sections.push(allowed);
       budget -= allowed.length;
+    }
+
+    // Marca activa: cimiento de toda tarea de marketing. Solo en turnos de
+    // marketing/contenido — no infla el contexto en el resto. Va arriba para que
+    // todo lo que Jarvis genere (copy, landing, campaña) herede la voz/pilares.
+    if (domains.has('marketing') && this.getBrandProfile) {
+      try {
+        const profile = this.getBrandProfile();
+        if (profile && this.formatBrandProfile) {
+          const block = `[marca activa]\n${this.formatBrandProfile(profile)}`.slice(0, 1000);
+          sections.push(block);
+          budget -= block.length;
+        }
+      } catch (_) {
+        // El perfil de marca nunca debe romper el ensamblado de contexto.
+      }
     }
 
     // Tier 0

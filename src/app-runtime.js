@@ -50,6 +50,7 @@ const { createMeetingTools } = require('./meeting/meeting-tools');
 const { createSocialHubTools } = require('./connectors/social-hub');
 const { createVideoTools } = require('./connectors/video-pipeline');
 const { createSheetsMemoryTools } = require('./connectors/sheets-memory');
+const { createBrandProfileTools } = require('./connectors/brand-profile');
 
 function createRuntime(options = {}) {
   const dataDir = options.dataDir || DATA_DIR;
@@ -436,7 +437,18 @@ function createRuntime(options = {}) {
 
   syncRuntimeSelfKnowledge({ memoryStore, toolRegistry });
 
-  const contextAssembler = new ContextAssembler({ memoryStore, workingMemoryStore, knowledgeGraph });
+  // Perfil de marca: se crea acá (antes del context-assembler) para poder
+  // inyectar la marca activa al contexto en turnos de marketing. Las tools se
+  // registran más abajo junto al resto.
+  const brandTools = createBrandProfileTools({ dataDir });
+
+  const contextAssembler = new ContextAssembler({
+    memoryStore,
+    workingMemoryStore,
+    knowledgeGraph,
+    getBrandProfile: brandTools.getActiveProfile,
+    formatBrandProfile: brandTools.formatProfile
+  });
 
   // Persona: fábrica (config de Daniel) + overlay opcional de cliente white-label.
   // Sin overlay → perfil idéntico al de siempre. options.persona permite
@@ -675,6 +687,11 @@ function createRuntime(options = {}) {
   }
 
   for (const tool of createSheetsMemoryTools({ authFactory: googleAuthFactory, dataDir })) {
+    toolRegistry.register(tool);
+  }
+
+  // brandTools ya se creó antes del context-assembler; acá solo se registran.
+  for (const tool of brandTools) {
     toolRegistry.register(tool);
   }
 
