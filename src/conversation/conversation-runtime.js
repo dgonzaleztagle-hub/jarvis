@@ -1,7 +1,6 @@
 const { formatHumanReadable } = require('../presenters/human-readable-format');
 const { applyOutputValueContract, inferOutputValue } = require('../presenters/output-value-contract');
-const { learnFromConversationTurn } = require('../memory/memory-learning');
-const { extractGraphFromTurn } = require('../memory/graph-extractor');
+const { extractTurnKnowledge } = require('../memory/turn-extractor');
 const prompts = require('./conversation-prompts');
 const { detectFeedbackPolarity, selectLessonsInPlay, applyReinforcement } = require('../memory/lesson-reinforcement');
 const { buildQuickAck } = require('./quick-ack');
@@ -805,21 +804,23 @@ class ConversationRuntime {
         console.warn(`[jarvis-codex] refuerzo de lecciones falló: ${err.message}`);
       }
 
-      // 2) Aprendizaje: extrae lecciones nuevas de este turno.
+      // 2) Aprendizaje: extrae memoria de perfil Y grafo de conocimiento del
+      //    turno con UNA sola llamada al modelo (antes eran dos secuenciales que
+      //    repetían los mismos invariantes). El orquestador aísla cada
+      //    persistencia y nunca propaga; aun así lo envolvemos por el catch
+      //    externo del pipeline. Ver src/memory/turn-extractor.js.
       try {
-        await learnFromConversationTurn({
+        await extractTurnKnowledge({
           userText: text,
           assistantResult: conversationTask.result,
           toolResults,
-          memoryStore: this.memoryStore,
           modelProvider: this.modelProvider,
+          memoryStore: this.memoryStore,
+          knowledgeGraph: this.knowledgeGraph,
           recentHistory
         });
       } catch (err) {
-        // El aprendizaje nunca debe romper el camino en vivo, pero su falla se
-        // registra: este catch ocultó por commits un ReferenceError que dejó el
-        // aprendizaje muerto. No volvemos a tragar errores en silencio.
-        console.warn(`[jarvis-codex] aprendizaje de memoria falló: ${err.message}`);
+        console.warn(`[jarvis-codex] extracción de conocimiento del turno falló: ${err.message}`);
       }
 
       // 3) Captura las lecciones en juego AHORA (incluye las recién creadas)
@@ -829,22 +830,6 @@ class ConversationRuntime {
       } catch (err) {
         this._lessonsInPlay = [];
         console.warn(`[jarvis-codex] captura de lecciones en juego falló: ${err.message}`);
-      }
-
-      // 4) Grafo de conocimiento: extrae entidades/hechos/relaciones/compromisos
-      //    del turno y los deposita como candidatos. Modela el mundo del usuario.
-      try {
-        if (this.knowledgeGraph) {
-          await extractGraphFromTurn({
-            userText: text,
-            assistantText: conversationTask.result?.speak || conversationTask.result?.visual || '',
-            modelProvider: this.modelProvider,
-            graph: this.knowledgeGraph
-          });
-        }
-      } catch (err) {
-        // La extracción al grafo nunca debe romper la conversación en vivo.
-        console.warn(`[jarvis-codex] extracción al grafo falló: ${err.message}`);
       }
     });
   }

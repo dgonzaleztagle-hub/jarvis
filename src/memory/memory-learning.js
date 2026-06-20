@@ -291,32 +291,41 @@ Máximo 3 items. Si no hay nada que valga la pena guardar, devuelve items: [].`,
   return Array.isArray(extraction.data?.items) ? extraction.data.items : [];
 }
 
-async function learnFromConversationTurn({ userText, assistantResult, toolResults, memoryStore, modelProvider, recentHistory = '' }) {
+// `preExtractedItems`: cuando el extractor unificado (turn-extractor) ya hizo la
+// ÚNICA llamada al modelo del turno, pasa aquí los items ya extraídos para que
+// esta función NO vuelva a llamar al modelo — solo corre heurísticas + guardas
+// de procedencia + persistencia. Si es null, mantiene el camino standalone
+// (llamada propia al modelo), que es el que usan los tests y el fallback.
+async function learnFromConversationTurn({ userText, assistantResult, toolResults, memoryStore, modelProvider, recentHistory = '', preExtractedItems = null }) {
   const intent = inferMemoryIntent(userText);
 
   // Heuristics still fire for explicit correction patterns — they're fast and precise
   const heuristicItems = inferPreferenceHeuristics(userText);
   const heuristicLessons = inferBehaviorLessonHeuristics(userText);
 
-  // Pass existing keys so the model avoids extracting duplicates
-  const existingKeys = (memoryStore?.list?.() || []).map((m) => m.key).filter(Boolean);
-
   let modelItems = [];
-  try {
-    modelItems = await extractMemoriesWithModel({
-      userText,
-      assistantResult,
-      toolResults,
-      modelProvider,
-      existingKeys,
-      recentHistory
-    });
-  } catch (err) {
-    // Si la extracción por modelo se cae siempre, el aprendizaje degrada a solo
-    // heurísticas sin que nadie lo note. Se registra (el catch externo ya cubre
-    // el resto del pipeline; este aísla la falla específica del modelo).
-    console.warn(`[jarvis-codex] extracción de memoria por modelo falló: ${err.message}`);
-    modelItems = [];
+  if (Array.isArray(preExtractedItems)) {
+    // La llamada al modelo ya la hizo el orquestador unificado: no se repite.
+    modelItems = preExtractedItems;
+  } else {
+    // Pass existing keys so the model avoids extracting duplicates
+    const existingKeys = (memoryStore?.list?.() || []).map((m) => m.key).filter(Boolean);
+    try {
+      modelItems = await extractMemoriesWithModel({
+        userText,
+        assistantResult,
+        toolResults,
+        modelProvider,
+        existingKeys,
+        recentHistory
+      });
+    } catch (err) {
+      // Si la extracción por modelo se cae siempre, el aprendizaje degrada a solo
+      // heurísticas sin que nadie lo note. Se registra (el catch externo ya cubre
+      // el resto del pipeline; este aísla la falla específica del modelo).
+      console.warn(`[jarvis-codex] extracción de memoria por modelo falló: ${err.message}`);
+      modelItems = [];
+    }
   }
 
   // Las heurísticas son regex sobre las palabras del usuario: nacen grounded.

@@ -129,8 +129,23 @@ function storeExtraction(graph, extraction, source = 'llm_extraction') {
 
 // Entrypoint: extrae del turno y almacena. Nunca lanza — el aprendizaje en
 // background jamás debe romper el camino en vivo.
-async function extractGraphFromTurn({ userText, assistantText, modelProvider, graph }) {
-  if (!modelProvider || !graph || !userText) {
+// `preExtracted`: cuando el extractor unificado (turn-extractor) ya hizo la
+// ÚNICA llamada al modelo del turno, pasa aquí el objeto {entities,facts,...}
+// para depositarlo directo en el grafo sin volver a llamar al modelo. Si es
+// null, mantiene el camino standalone (llamada propia), usado por tests/fallback.
+async function extractGraphFromTurn({ userText, assistantText, modelProvider, graph, preExtracted = null }) {
+  if (!graph) {
+    return { entities: 0, facts: 0, relationships: 0, commitments: 0 };
+  }
+  // Camino unificado: el modelo ya corrió; solo persistimos. Nunca lanza.
+  if (preExtracted && typeof preExtracted === 'object') {
+    try {
+      return storeExtraction(graph, preExtracted, 'llm_extraction');
+    } catch (_) {
+      return { entities: 0, facts: 0, relationships: 0, commitments: 0 };
+    }
+  }
+  if (!modelProvider || !userText) {
     return { entities: 0, facts: 0, relationships: 0, commitments: 0 };
   }
   try {
