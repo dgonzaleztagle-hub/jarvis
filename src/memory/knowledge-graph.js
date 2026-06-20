@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { normalizeText } = require('./memory-store');
+const { writeJsonAtomic } = require('../core/atomic-json');
 
 // Grafo de conocimiento: modela el MUNDO del usuario como entidades (persona,
 // proyecto, herramienta, lugar, concepto, evento) conectadas por hechos y
@@ -30,22 +31,6 @@ const STOPWORDS = new Set([
   'porque', 'cosa', 'cosas', 'algo', 'todo', 'todos', 'nada', 'bien', 'the',
   'and', 'for', 'with', 'this', 'that', 'recuerda', 'recordar', 'sabes', 'dime'
 ]);
-
-function writeJsonAtomic(filePath, data) {
-  const tempPath = `${filePath}.${process.pid}.tmp`;
-  const serialized = JSON.stringify(data, null, 2);
-  fs.writeFileSync(tempPath, serialized, 'utf-8');
-  try {
-    fs.renameSync(tempPath, filePath);
-  } catch (error) {
-    if (error.code === 'EPERM' || error.code === 'EACCES') {
-      fs.writeFileSync(filePath, serialized, 'utf-8');
-      fs.rmSync(tempPath, { force: true });
-      return;
-    }
-    throw error;
-  }
-}
 
 function genId(prefix) {
   return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;

@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { writeJsonAtomic } = require('../core/atomic-json');
 
 const SCHEDULE_TYPES = ['daily', 'interval', 'manual'];
 
@@ -75,7 +76,7 @@ class AgentStore {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
-    fs.writeFileSync(this.filePath(agent.id), JSON.stringify(agent, null, 2), 'utf-8');
+    writeJsonAtomic(this.filePath(agent.id), agent);
     return agent;
   }
 
@@ -83,7 +84,7 @@ class AgentStore {
     const agent = this.get(id);
     if (!agent) throw new Error(`AGENT_NOT_FOUND: ${id}`);
     const updated = { ...agent, ...patch, id: agent.id, updatedAt: new Date().toISOString() };
-    fs.writeFileSync(this.filePath(agent.id), JSON.stringify(updated, null, 2), 'utf-8');
+    writeJsonAtomic(this.filePath(agent.id), updated);
     return updated;
   }
 

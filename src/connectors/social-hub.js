@@ -5,6 +5,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { writeJsonAtomic } = require('../core/atomic-json');
 
 const { createMetaDriver } = require('./social/meta');
 const { createTikTokDriver } = require('./social/tiktok');
@@ -45,7 +46,7 @@ function createSocialHubTools({ credentialVault, dataDir, googleAuthFactory }) {
 
   function savePosts(posts) {
     fs.mkdirSync(dataDir, { recursive: true });
-    fs.writeFileSync(postsFile, JSON.stringify(posts, null, 2));
+    writeJsonAtomic(postsFile, posts);
   }
 
   // Resuelve lista de plataformas pedidas → { ok: [driverId,...], needsOnboarding: [{platform, driverId, instructions},...] }

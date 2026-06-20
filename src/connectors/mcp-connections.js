@@ -9,6 +9,7 @@
  */
 const fs = require('fs');
 const path = require('path');
+const { writeJsonAtomic } = require('../core/atomic-json');
 
 function getStorePath(dataDir) {
   return path.join(dataDir, 'mcp-connections.json');
@@ -25,7 +26,7 @@ function loadConnections(dataDir) {
 }
 
 function saveConnections(dataDir, connections) {
-  fs.writeFileSync(getStorePath(dataDir), JSON.stringify(connections, null, 2));
+  writeJsonAtomic(getStorePath(dataDir), connections);
 }
 
 function normalizeMcpUrl(url) {

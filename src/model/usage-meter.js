@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { writeJsonAtomic } = require('../core/atomic-json');
 
 class UsageMeter {
   constructor({ dataDir }) {
@@ -15,7 +16,7 @@ class UsageMeter {
   }
 
   write(data) {
-    fs.writeFileSync(this.usagePath, JSON.stringify(data, null, 2), 'utf-8');
+    writeJsonAtomic(this.usagePath, data);
   }
 
   record(entry) {

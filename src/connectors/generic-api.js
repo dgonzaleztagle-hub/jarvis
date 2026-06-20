@@ -4,6 +4,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { writeJsonAtomic } = require('../core/atomic-json');
 
 function getStorePath(dataDir) {
   return path.join(dataDir, 'api-connections.json');
@@ -16,7 +17,7 @@ function loadApiConnections(dataDir) {
 }
 
 function saveApiConnections(dataDir, connections) {
-  fs.writeFileSync(getStorePath(dataDir), JSON.stringify(connections, null, 2));
+  writeJsonAtomic(getStorePath(dataDir), connections);
 }
 
 function buildAuthHeaders(auth = {}) {

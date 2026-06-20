@@ -4,6 +4,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { writeJsonAtomic } = require('../../core/atomic-json');
 
 const CAPABILITIES = ['video'];
 
@@ -16,7 +17,7 @@ function createYouTubeDriver({ credentialVault, dataDir, googleAuthFactory }) {
 
   function saveConfig(cfg) {
     fs.mkdirSync(dataDir, { recursive: true });
-    fs.writeFileSync(configFile, JSON.stringify({ ...cfg, updatedAt: new Date().toISOString() }, null, 2));
+    writeJsonAtomic(configFile, { ...cfg, updatedAt: new Date().toISOString() });
   }
 
   return {

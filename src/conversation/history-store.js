@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { writeJsonAtomic } = require('../core/atomic-json');
 
 // this.history en ConversationRuntime vive solo en memoria (tope 12 entradas)
 // y se pierde al reiniciar el proceso. Este store persiste cada turno en un
@@ -55,7 +56,7 @@ class HistoryStore {
   // Sobrevive reinicios del proceso.
   saveState({ summary = null, pendingIntent = null } = {}) {
     const state = { summary, pendingIntent, updatedAt: new Date().toISOString() };
-    fs.writeFileSync(this.statePath, JSON.stringify(state, null, 2), 'utf-8');
+    writeJsonAtomic(this.statePath, state);
   }
 
   loadState() {

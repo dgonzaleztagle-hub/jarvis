@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { writeJsonAtomic } = require('../core/atomic-json');
 
 const VALID_STATES = ['candidate', 'verified', 'conflicting', 'low_confidence', 'rejected', 'sensitive', 'obsolete'];
 const CAPABILITY_INTENT_PATTERN = /\b(capacidades?|que puedes hacer|qué puedes hacer|que sabes hacer|qué sabes hacer|superpoderes|funciones?|habilidades?|disponible|disponibles)\b/i;
@@ -152,22 +153,6 @@ function formatRecordForPrompt(record) {
 
   const summary = compactValue(record.content, { maxLength: 240 }) || compactText(record.title, 120);
   return `${record.title} (${record.type}, ${record.state}) -> ${summary}`;
-}
-
-function writeJsonAtomic(filePath, data) {
-  const tempPath = `${filePath}.${process.pid}.tmp`;
-  const serialized = JSON.stringify(data, null, 2);
-  fs.writeFileSync(tempPath, serialized, 'utf-8');
-  try {
-    fs.renameSync(tempPath, filePath);
-  } catch (error) {
-    if (error.code === 'EPERM' || error.code === 'EACCES') {
-      fs.writeFileSync(filePath, serialized, 'utf-8');
-      fs.rmSync(tempPath, { force: true });
-      return;
-    }
-    throw error;
-  }
 }
 
 class MemoryStore {

@@ -6,6 +6,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { writeJsonAtomic } = require('../../core/atomic-json');
 
 const META_API = 'https://graph.facebook.com/v20.0';
 const CONFIG_KEY = 'meta';
@@ -96,7 +97,7 @@ function createMetaDriver({ credentialVault, dataDir }) {
 
   function saveConfig(cfg) {
     fs.mkdirSync(dataDir, { recursive: true });
-    fs.writeFileSync(configFile, JSON.stringify({ ...cfg, updatedAt: new Date().toISOString() }, null, 2));
+    writeJsonAtomic(configFile, { ...cfg, updatedAt: new Date().toISOString() });
   }
 
   function loadPosts() {
@@ -104,7 +105,7 @@ function createMetaDriver({ credentialVault, dataDir }) {
   }
 
   function savePosts(posts) {
-    fs.writeFileSync(postsFile, JSON.stringify(posts, null, 2));
+    writeJsonAtomic(postsFile, posts);
   }
 
   async function getToken() {

@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { writeFileAtomic } = require('../core/atomic-json');
 
 class CredentialVault {
   constructor({ dataDir }) {
@@ -45,7 +46,9 @@ class CredentialVault {
   }
 
   writeAll(data) {
-    fs.writeFileSync(this.vaultPath, this.encrypt(data), 'utf-8');
+    // Atómico: el vault es UN blob cifrado. Una escritura cortada acá perdía
+    // TODAS las credenciales (keys, tokens de Google) sin recuperación posible.
+    writeFileAtomic(this.vaultPath, this.encrypt(data));
   }
 
   set(name, value, metadata = {}) {

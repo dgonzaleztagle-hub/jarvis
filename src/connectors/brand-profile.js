@@ -15,6 +15,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { writeJsonAtomic } = require('../core/atomic-json');
 
 const PROFILES_FILE = 'brand/profiles.json';
 
@@ -38,7 +39,7 @@ function createBrandProfileTools({ dataDir }) {
 
   function save(store) {
     fs.mkdirSync(path.dirname(profilesPath), { recursive: true });
-    fs.writeFileSync(profilesPath, JSON.stringify(store, null, 2));
+    writeJsonAtomic(profilesPath, store);
   }
 
   // Resuelve qué marca está activa: la marcada explícitamente, o la única que

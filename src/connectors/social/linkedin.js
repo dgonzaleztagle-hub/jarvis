@@ -4,6 +4,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { writeJsonAtomic } = require('../../core/atomic-json');
 
 const LI_API = 'https://api.linkedin.com/v2';
 const CAPABILITIES = ['text', 'image', 'video'];
@@ -17,7 +18,7 @@ function createLinkedInDriver({ credentialVault, dataDir }) {
 
   function saveConfig(cfg) {
     fs.mkdirSync(dataDir, { recursive: true });
-    fs.writeFileSync(configFile, JSON.stringify({ ...cfg, updatedAt: new Date().toISOString() }, null, 2));
+    writeJsonAtomic(configFile, { ...cfg, updatedAt: new Date().toISOString() });
   }
 
   async function liGet(endpoint, token) {

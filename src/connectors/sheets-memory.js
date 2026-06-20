@@ -13,6 +13,7 @@ const fs = require('fs');
 const path = require('path');
 const { withRetry } = require('../utils/retry');
 const { google } = require('googleapis');
+const { writeJsonAtomic } = require('../core/atomic-json');
 
 const SHEET_ID_FILE = 'memory/external-sheet-id.json';
 const MASTER_TITLE = 'Jarvis — Memoria Externa';
@@ -54,7 +55,7 @@ function createSheetsMemoryTools({ authFactory, dataDir }) {
 
   function saveSpreadsheetId(spreadsheetId) {
     fs.mkdirSync(path.dirname(idFile), { recursive: true });
-    fs.writeFileSync(idFile, JSON.stringify({ spreadsheetId, createdAt: new Date().toISOString() }, null, 2));
+    writeJsonAtomic(idFile, { spreadsheetId, createdAt: new Date().toISOString() });
   }
 
   async function getSheets() {
