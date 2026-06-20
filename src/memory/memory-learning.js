@@ -311,7 +311,11 @@ async function learnFromConversationTurn({ userText, assistantResult, toolResult
       existingKeys,
       recentHistory
     });
-  } catch (_) {
+  } catch (err) {
+    // Si la extracción por modelo se cae siempre, el aprendizaje degrada a solo
+    // heurísticas sin que nadie lo note. Se registra (el catch externo ya cubre
+    // el resto del pipeline; este aísla la falla específica del modelo).
+    console.warn(`[jarvis-codex] extracción de memoria por modelo falló: ${err.message}`);
     modelItems = [];
   }
 

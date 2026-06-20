@@ -87,6 +87,25 @@ test('runtime syncs assistant self-knowledge from active tools', () => {
   assert.equal(capabilities.type, 'assistant_self_knowledge');
   assert.ok(Array.isArray(capabilities.content.capabilityGroups));
   assert.ok(capabilities.content.capabilityGroups.some((group) => group.name === 'Comunicacion y organizacion'));
+
+  // Invariante de completitud (lente cableado/orden): el snapshot de capacidades
+  // debe reflejar TODAS las tools registradas, no las que existían a mitad del
+  // arranque. Cuando syncRuntimeSelfKnowledge corría antes de registrar los
+  // conectores, totalTools quedaba corto y Jarvis ignoraba la mitad de lo suyo.
+  // Esta aserción hace imposible reintroducir ese bug en silencio.
+  const liveTools = runtime.toolRegistry.list().filter((t) => !t.name.startsWith('model.'));
+  assert.equal(
+    capabilities.content.totalTools,
+    liveTools.length,
+    'el snapshot de capacidades debe contar todas las tools vivas (snapshot tomado antes de registrar conectores)'
+  );
+
+  // Y los grupos que se registran tarde en el arranque deben estar presentes:
+  // son justo los que el bug de orden dejaba afuera.
+  const groupNames = capabilities.content.capabilityGroups.map((g) => g.name);
+  for (const expected of ['Creacion de video (Remotion + ffmpeg)', 'Redes sociales', 'Marca y marketing', 'WhatsApp personal']) {
+    assert.ok(groupNames.includes(expected), `falta el grupo "${expected}" en el self-knowledge (registro tardío perdido)`);
+  }
 });
 
 test('memory prompt context is compact and intent-aware', () => {

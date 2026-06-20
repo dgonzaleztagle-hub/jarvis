@@ -74,15 +74,35 @@ class KnowledgeGraph {
   }
 
   read() {
+    let raw;
     try {
-      const data = JSON.parse(fs.readFileSync(this.graphPath, 'utf-8'));
+      raw = fs.readFileSync(this.graphPath, 'utf-8');
+    } catch (_) {
+      // No existe / no se puede leer: grafo vacío legítimo, sin drama.
+      return { entities: [], facts: [], relationships: [], commitments: [] };
+    }
+    try {
+      const data = JSON.parse(raw);
       return {
         entities: data.entities || [],
         facts: data.facts || [],
         relationships: data.relationships || [],
         commitments: data.commitments || []
       };
-    } catch (_) {
+    } catch (err) {
+      // El archivo EXISTE pero está corrupto. Devolver vacío en silencio es una
+      // bomba: el próximo write() lo sobrescribe atómicamente y se pierde todo el
+      // grafo sin una sola línea de log. Antes de seguir, respaldamos el archivo
+      // ilegible a disco y avisamos fuerte — los datos quedan recuperables.
+      if (raw && raw.trim()) {
+        try {
+          const backup = `${this.graphPath}.corrupt-${Date.now()}.json`;
+          fs.writeFileSync(backup, raw, 'utf-8');
+          console.error(`[jarvis-codex] grafo CORRUPTO: ${err.message}. Respaldado en ${backup} antes de reiniciarlo.`);
+        } catch (backupErr) {
+          console.error(`[jarvis-codex] grafo CORRUPTO e irrespaldable: ${err.message} / ${backupErr.message}`);
+        }
+      }
       return { entities: [], facts: [], relationships: [], commitments: [] };
     }
   }

@@ -165,7 +165,11 @@ function createMetaDriver({ credentialVault, dataDir }) {
       try {
         const igData = await metaGet(`/${targetPage.id}?fields=instagram_business_account`, targetPage.pageToken);
         igAccountId = igData.instagram_business_account?.id || null;
-      } catch (_) {}
+      } catch (err) {
+        // No bloquea el connect (FB queda igual), pero distingue "no hay IG" de
+        // "el token no alcanza para verlo": sin esto, debuggear es a ciegas.
+        console.warn(`[jarvis-codex] no se pudo resolver la cuenta IG de la página: ${err.message}`);
+      }
 
       credentialVault.set('META_PAGE_ACCESS_TOKEN', targetPage.pageToken, { source: 'social.connect' });
       credentialVault.set('META_USER_TOKEN', token, { source: 'social.connect' });
@@ -215,11 +219,20 @@ function createMetaDriver({ credentialVault, dataDir }) {
             `/${cfg.pageId}/videos`,
             fileBuffer, 'video/mp4', token
           );
-          // También se puede pasar description
+          // También se puede pasar description. Si falla, NO mentir éxito total:
+          // el video quedó publicado pero mudo, y el usuario debe saberlo.
+          let captionOk = true;
           if (text) {
-            try { await metaPost(`/${fbRes.id}`, { description: text }, token); } catch (_) {}
+            try {
+              await metaPost(`/${fbRes.id}`, { description: text }, token);
+            } catch (err) {
+              captionOk = false;
+              console.warn(`[jarvis-codex] FB video subido pero la descripción no se adjuntó: ${err.message}`);
+            }
           }
-          results.facebook = { ok: true, videoId: fbRes.id };
+          results.facebook = captionOk
+            ? { ok: true, videoId: fbRes.id }
+            : { ok: true, videoId: fbRes.id, captionFailed: true, note: 'El video se publicó pero el texto no se pudo adjuntar.' };
         } else {
           const body = { message: text };
           if (imageUrl) body.link = imageUrl;

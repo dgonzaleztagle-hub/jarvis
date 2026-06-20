@@ -20,6 +20,27 @@ test('upsertEntity deduplica por tipo + nombre normalizado y mergea propiedades'
   assert.equal(graph.stats().entities, 1);
 });
 
+test('read() con grafo corrupto respalda el archivo en vez de perderlo en silencio', () => {
+  const dir = tempDataDir();
+  const graph = new KnowledgeGraph({ dataDir: dir });
+  const ent = graph.upsertEntity('person', 'Vikram', { rol: 'dueño' });
+  graph.addFact(ent.id, 'empresa', 'Rishtedar', { state: 'verified', source: 'user_explicit' });
+
+  // Corromper el archivo del grafo a mano (simula escritura cortada / disco).
+  const graphPath = path.join(dir, 'memory', 'graph.json');
+  fs.writeFileSync(graphPath, '{ "entities": [ {corrupto', 'utf-8');
+
+  // read() no debe explotar y debe degradar a vacío, PERO sin destruir el dato:
+  // el contenido original tiene que quedar respaldado en disco.
+  const recovered = new KnowledgeGraph({ dataDir: dir });
+  const data = recovered.read();
+  assert.deepEqual(data, { entities: [], facts: [], relationships: [], commitments: [] });
+
+  const backups = fs.readdirSync(path.join(dir, 'memory')).filter((f) => f.includes('.corrupt-'));
+  assert.equal(backups.length, 1, 'el grafo corrupto debe respaldarse antes de reiniciarse');
+  assert.match(fs.readFileSync(path.join(dir, 'memory', backups[0]), 'utf-8'), /corrupto/);
+});
+
 test('addFact nace candidate y asciende a verified al reobservarse', () => {
   const graph = new KnowledgeGraph({ dataDir: tempDataDir() });
   const ent = graph.upsertEntity('person', 'Vikram');

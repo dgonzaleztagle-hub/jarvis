@@ -213,8 +213,11 @@ class ContextAssembler {
           sections.push(block);
           budget -= block.length;
         }
-      } catch (_) {
-        // El perfil de marca nunca debe romper el ensamblado de contexto.
+      } catch (err) {
+        // Nunca rompe el ensamblado, pero si la marca desaparece del contexto por
+        // un bug latente, debe verse — es la misma forma del catch mudo que dejó
+        // el aprendizaje muerto por commits.
+        console.warn(`[jarvis-codex] inyección de marca al contexto falló: ${err.message}`);
       }
     }
 
@@ -262,8 +265,10 @@ class ContextAssembler {
         if (knowledge) graphLines.push(knowledge);
         const commitments = this.graph.getOpenCommitmentsSummary({ limit: 4 });
         if (commitments) graphLines.push(`Compromisos abiertos:\n${commitments}`);
-      } catch (_) {
-        // El grafo nunca debe romper el ensamblado de contexto.
+      } catch (err) {
+        // No rompe el ensamblado, pero un grafo que se cae siempre en silencio es
+        // un contexto degradado invisible. Se registra.
+        console.warn(`[jarvis-codex] grafo al contexto falló: ${err.message}`);
       }
       if (graphLines.length > 0) {
         const block = `[grafo de conocimiento]\n${graphLines.join('\n')}`;
