@@ -645,7 +645,10 @@ function createRuntime(options = {}) {
       }
 
       if (!html.trim() && brief) {
-        const genPrompt = `Genera un documento HTML COMPLETO y autocontenido para: ${brief}.\nRequisitos: un único archivo, todo el CSS dentro de <style>, responsive, estética cuidada y moderna —no escatimes en diseño—, contenido realista (no "lorem ipsum"). Sin dependencias externas ni <script>. Devuelve SOLO el HTML empezando por <!doctype html>, sin markdown ni explicación.`;
+        const genPrompt = `Genera un documento HTML COMPLETO y autocontenido para: ${brief}.
+DISEÑO (esto es lo que separa una landing pobre de una profesional): usa Tailwind CSS — clases de utilidad — para TODO el estilo. El runtime de Tailwind YA está inyectado en la página: NO agregues <style>, <link>, <script> ni el CDN, solo escribe el markup con clases.
+Apunta a nivel agencia, no a un borrador: jerarquía tipográfica fuerte (titulares grandes, text-balance), espaciado generoso (py-16/py-24 entre secciones), una paleta coherente de 2-3 colores (usa los tonos de marca si el brief los menciona; si no, elige una paleta acorde al rubro), secciones claras (hero con headline + subhead + CTA prominente, beneficios/features en grid, destacados o prueba social, cierre con CTA, footer), botones con hover/transición y bordes redondeados, sombras suaves, e imágenes con gradientes/placeholders elegantes (usa fondos de color o gradientes con Tailwind, no enlaces a imágenes externas). Totalmente responsive (mobile-first con sm/md/lg) y buen contraste/accesibilidad. Contenido realista en español (nada de "lorem ipsum").
+Devuelve SOLO el HTML empezando por <!doctype html>, sin markdown ni explicación. No incluyas el script de Tailwind: se inyecta solo.`;
         try {
           const { text, truncated } = await generateWithContinuation({
             callOnce,
@@ -664,6 +667,23 @@ function createRuntime(options = {}) {
       }
 
       if (!html.trim()) return { ok: false, error: 'BRIEF_OR_HTML_REQUIRED' };
+
+      // Inyecta el runtime de Tailwind (bundle LOCAL, sirve offline en el .exe
+      // white-label — nada de CDN). El modelo escribe clases de utilidad y el
+      // motor las compila en el browser. Así la calidad de diseño deja de
+      // depender de que el modelo escriba CSS a mano en cada landing.
+      function injectTailwind(doc) {
+        if (/vendor\/tailwind\.js/.test(doc)) return doc; // ya inyectado
+        const tags = [
+          '<script src="/public/vendor/tailwind.js"></script>',
+          "<script>tailwind.config={theme:{extend:{fontFamily:{sans:['ui-sans-serif','system-ui','-apple-system','Segoe UI','Roboto','Helvetica','Arial','sans-serif']}}}}</script>"
+        ].join('\n');
+        if (/<head[^>]*>/i.test(doc)) return doc.replace(/<head[^>]*>/i, (m) => `${m}\n${tags}`);
+        if (/<html[^>]*>/i.test(doc)) return doc.replace(/<html[^>]*>/i, (m) => `${m}\n<head>\n${tags}\n</head>`);
+        return `${tags}\n${doc}`;
+      }
+      html = injectTailwind(html);
+
       const previewsDir = path.join(dataDir, 'previews');
       fs.mkdirSync(previewsDir, { recursive: true });
       const fileName = `preview_${Date.now()}_${Math.random().toString(16).slice(2, 8)}.html`;
