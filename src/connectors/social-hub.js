@@ -84,7 +84,7 @@ function createSocialHubTools({ credentialVault, dataDir, googleAuthFactory }) {
     {
       name: 'social.connect',
       description: 'Conectar una plataforma de redes sociales. Si no se pasan credenciales, devuelve instrucciones de onboarding.',
-      input_schema: {
+      inputSchema: {
         type: 'object',
         properties: {
           platform: { type: 'string', description: 'Plataforma: fb, ig, meta, tiktok, linkedin, youtube' },
@@ -96,7 +96,8 @@ function createSocialHubTools({ credentialVault, dataDir, googleAuthFactory }) {
         },
         required: ['platform']
       },
-      riskLevel: 'medium',
+      risk: 'medium',
+      required: ['platform'],
       async execute(input) {
         const driverId = PLATFORM_ALIASES[(input.platform || '').toLowerCase()];
         if (!driverId) {
@@ -110,8 +111,8 @@ function createSocialHubTools({ credentialVault, dataDir, googleAuthFactory }) {
     {
       name: 'social.status',
       description: 'Muestra el estado de conexión de todas las plataformas de redes sociales.',
-      input_schema: { type: 'object', properties: {} },
-      riskLevel: 'low',
+      inputSchema: { type: 'object', properties: {} },
+      risk: 'low',
       async execute() {
         const status = {};
         for (const [driverId, driver] of Object.entries(drivers)) {
@@ -132,7 +133,7 @@ function createSocialHubTools({ credentialVault, dataDir, googleAuthFactory }) {
     {
       name: 'social.publish',
       description: 'Publica contenido en una o más plataformas. Si alguna no está configurada, devuelve instrucciones de onboarding antes de publicar.',
-      input_schema: {
+      inputSchema: {
         type: 'object',
         properties: {
           platforms: {
@@ -147,7 +148,11 @@ function createSocialHubTools({ credentialVault, dataDir, googleAuthFactory }) {
           private:   { type: 'boolean', description: 'Subir como privado (YouTube)' }
         }
       },
-      riskLevel: 'high',
+      risk: 'high',
+      // Publicar a las redes del usuario es saliente: el contrato de procedencia
+      // exige confirmación cuando el contenido lo compuso el modelo (igual que
+      // wa.send_message y gmail.send_email), mostrando el borrador antes de postear.
+      outbound: true,
       async execute(input) {
         const requestedPlatforms = Array.isArray(input.platforms) && input.platforms.length > 0
           ? input.platforms
@@ -215,7 +220,7 @@ function createSocialHubTools({ credentialVault, dataDir, googleAuthFactory }) {
     {
       name: 'social.schedule_post',
       description: 'Guarda un post para publicación futura. El agente scheduler o el usuario deben ejecutar social.publish_scheduled cuando llegue el momento.',
-      input_schema: {
+      inputSchema: {
         type: 'object',
         properties: {
           platforms:   { type: 'array', items: { type: 'string' } },
@@ -226,7 +231,8 @@ function createSocialHubTools({ credentialVault, dataDir, googleAuthFactory }) {
         },
         required: ['scheduledAt']
       },
-      riskLevel: 'low',
+      risk: 'low',
+      required: ['scheduledAt'],
       async execute(input) {
         if (!input.text && !input.imageUrl && !input.videoPath) {
           return { ok: false, error: 'Se requiere al menos text, imageUrl o videoPath.' };
@@ -252,8 +258,8 @@ function createSocialHubTools({ credentialVault, dataDir, googleAuthFactory }) {
     {
       name: 'social.publish_scheduled',
       description: 'Ejecuta todos los posts programados cuyo scheduledAt ya pasó.',
-      input_schema: { type: 'object', properties: {} },
-      riskLevel: 'medium',
+      inputSchema: { type: 'object', properties: {} },
+      risk: 'medium',
       async execute() {
         const now = new Date();
         const posts = loadPosts();
@@ -292,14 +298,14 @@ function createSocialHubTools({ credentialVault, dataDir, googleAuthFactory }) {
     {
       name: 'social.list_posts',
       description: 'Lista el historial de posts publicados y programados.',
-      input_schema: {
+      inputSchema: {
         type: 'object',
         properties: {
           status: { type: 'string', enum: ['published', 'scheduled', 'blocked', 'all'], description: 'Filtrar por estado (default: all)' },
           limit:  { type: 'number', description: 'Máximo de resultados (default: 20)' }
         }
       },
-      riskLevel: 'low',
+      risk: 'low',
       async execute(input) {
         let posts = loadPosts();
         if (input.status && input.status !== 'all') {
