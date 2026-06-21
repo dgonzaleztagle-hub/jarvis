@@ -3,9 +3,9 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { matchConcept, buildDesignDirective, rollSeeds, planLanding } = require('../src/design/landing-design-system');
-const { auditLanding } = require('../src/design/landing-qa');
-const { recordCombo, recentCombos } = require('../src/design/variation-store');
+const { matchConcept, buildDesignDirective, rollSeeds, planLanding } = require('../src/modules/design/landing-design-system');
+const { auditLanding } = require('../src/modules/design/landing-qa');
+const { recordCombo, recentCombos } = require('../src/modules/design/variation-store');
 
 test('matchConcept calza el nicho (determinista) y el concepto cuando la señal es fuerte', () => {
   // Nicho: determinista por keywords en español.

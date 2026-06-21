@@ -2,7 +2,7 @@
 /*
  * Build-time: extrae la librería de conceptos por nicho desde los prompts de
  * HojaCero (auditoria_prompts/batch_*.sql, tabla demo_prompts) y la materializa
- * en src/design/niche-concepts.js — así Jarvis NO depende de Supabase en runtime
+ * en src/modules/design/niche-concepts.js — así Jarvis NO depende de Supabase en runtime
  * (local-first / white-label offline). Limpia el ruido específico de HojaCero
  * (READ BIBLIA, OBEY seeds, rutas de archivo) y conserva la sustancia de
  * contenido: CONCEPT, KEYWORDS, VOICE, HERO, SECTIONS, COLOR STRATEGY.
@@ -14,7 +14,7 @@ const path = require('path');
 
 const HOJACERO = process.argv[2] || 'C:/proyectos/hojacero';
 const SRC_DIR = path.join(HOJACERO, 'auditoria_prompts');
-const OUT = path.join(__dirname, '..', 'src', 'design', 'niche-concepts.js');
+const OUT = path.join(__dirname, '..', 'src', 'modules', 'design', 'niche-concepts.js');
 
 // batch_7 tiene una versión _FIXED que reemplaza a la original.
 const FILES = [

@@ -51,6 +51,7 @@ const { createSocialHubTools } = require('./connectors/social-hub');
 const { createVideoTools } = require('./connectors/video-pipeline');
 const { createSheetsMemoryTools } = require('./connectors/sheets-memory');
 const { createBrandProfileTools } = require('./connectors/brand-profile');
+const { createDesignModule } = require('./modules/design');
 
 function createRuntime(options = {}) {
   const dataDir = options.dataDir || DATA_DIR;
@@ -607,135 +608,13 @@ function createRuntime(options = {}) {
     }
   });
 
-  toolRegistry.register({
-    name: 'preview.render_html',
-    description: 'Crear y mostrar una página (landing, maqueta, sitio, cualquier documento web) en el HUD del usuario: aparece renderizada en un panel con opción de abrirla en grande. Úsalo cuando el usuario pida una página/landing/web. NO escribas tú el HTML completo: pasa un BRIEF corto en lenguaje natural y la herramienta genera el HTML por dentro. Input: { brief: "qué página crear, para quién, secciones y tono (ej: landing para Rishtedar, restaurante indio en Santiago: hero, platos destacados, botón de reserva, estética cálida)", title: "nombre legible opcional" }.',
-    risk: 'low',
-    permissions: [],
-    execute: async (input) => {
-      const fs = require('fs');
-      const path = require('path');
-      let html = String(input.html || '');
-      const brief = String(input.brief || '').trim();
-
-      // El HTML largo NO viaja en el toolCall (no cabe en el presupuesto de la
-      // decisión): se genera acá, con techo amplio, usando el MODELO ACTIVO.
-      // Así la calidad de la landing depende del modelo (Gemini free vs Sonnet)
-      // — justo lo que el flujo de escala de modelos quiere poder comparar.
-      // Detecta si el HTML quedó cortado por el techo de tokens: o el provider
-      // avisa stop_reason==='max_tokens', o el documento nunca llegó a cerrar
-      // </html> (heurística para providers que no reportan stop reason).
-      const isComplete = (text, stopReason) =>
-        stopReason !== 'max_tokens' && /<\/html>\s*$/i.test(text.trim());
-      const stripFences = (text) => text.replace(/^```(?:html)?\s*/i, '').replace(/```\s*$/i, '');
-
-      async function callOnce(messages, maxTokens) {
-        if (typeof modelProvider.generateText === 'function') {
-          const out = await modelProvider.generateText({
-            system: `Eres un diseñador web. Devuelves únicamente HTML+CSS, sin explicaciones ni markdown.\n\n${CONTENT_HONESTY_CLAUSE}`,
-            messages, maxTokens, temperature: 0.5, purpose: 'preview_html'
-          });
-          return { text: String(out.text || ''), stopReason: out.stopReason || null };
-        }
-        const out = await modelProvider.generateJson({
-          system: `Devuelve únicamente JSON { "html": "<documento completo>" }. Sin markdown.\n\n${CONTENT_HONESTY_CLAUSE}`,
-          messages, maxTokens, temperature: 0.5, purpose: 'preview_html'
-        });
-        return { text: String(out.data?.html || ''), stopReason: out.stopReason || null };
-      }
-
-      if (!html.trim() && brief) {
-        const { planLanding } = require('./design/landing-design-system');
-        const { recentCombos, recordCombo } = require('./design/variation-store');
-        // Marca activa → colores exactos + clave de cliente para la memoria de variaciones.
-        let brandColors = null;
-        let clientKey = '';
-        try {
-          const bp = brandTools.getActiveProfile && brandTools.getActiveProfile();
-          if (bp) {
-            clientKey = bp.name || '';
-            if (Array.isArray(bp.colors) && bp.colors.length) {
-              brandColors = { primary: bp.colors[0], secondary: bp.colors[1] || null, accent: bp.colors[2] || null };
-            }
-          }
-        } catch (_) { /* sin marca activa: paleta del rubro */ }
-        if (!clientKey) clientKey = brief.slice(0, 60);
-        // Evita repetir el combo de las últimas landings de ESTE cliente (diverso en el tiempo, no solo aleatorio).
-        const avoid = recentCombos(dataDir, clientKey, 3);
-        const plan = planLanding({ brief, brandColors, avoid });
-        recordCombo(dataDir, clientKey, plan.combo);
-        const genPrompt = `${plan.directive}
-
----
-
-Ahora genera el documento HTML COMPLETO y autocontenido para: ${brief}.
-TÉCNICA: usa Tailwind (clases de utilidad) para el layout y el grueso del estilo — el runtime de Tailwind YA está inyectado, NO agregues el script ni el CDN de Tailwind. Las fuentes de la dirección de arte YA están cargadas localmente (no agregues <link> de Google Fonts): aplícalas por font-family en el <style>. Usa un único bloque <style> SOLO para lo que Tailwind no cubre (font-family de las fuentes elegidas, @keyframes de revelado, grano/textura, scroll-snap). No uses imágenes externas: resuelve lo visual con color, gradientes, formas y tipografía. Responsive mobile-first (sm/md/lg). Devuelve SOLO el HTML empezando por <!doctype html>, sin markdown ni explicación.`;
-        try {
-          const { text, truncated } = await generateWithContinuation({
-            callOnce,
-            prompt: genPrompt,
-            isComplete,
-            stripFences,
-            continuePrompt: 'Continúa EXACTAMENTE donde quedó el documento anterior, sin repetir nada de lo ya escrito y sin comentarios, hasta cerrar con </html>.'
-          });
-          if (truncated) {
-            return { ok: false, error: 'PREVIEW_INCOMPLETE: el documento generado quedó cortado (excede el límite de tokens) incluso tras continuar.' };
-          }
-          html = text;
-        } catch (err) {
-          return { ok: false, error: `PREVIEW_GENERATION_FAILED: ${err.message}` };
-        }
-      }
-
-      if (!html.trim()) return { ok: false, error: 'BRIEF_OR_HTML_REQUIRED' };
-
-      // Gate de QA estático (sin browser): atrapa fallas objetivas de estructura,
-      // accesibilidad y física de diseño. Si hay CRÍTICAS y la generamos de un
-      // brief, una (1) pasada de reparación dirigida antes de mostrarla.
-      const { auditLanding } = require('./design/landing-qa');
-      let qa = auditLanding(html);
-      if (brief && qa.criticalCount > 0) {
-        try {
-          const repairPrompt = `Este HTML tiene problemas de QA que DEBES corregir, manteniendo el diseño, el contenido y las clases Tailwind. Problemas:\n${qa.issues.map((i) => `- ${i.msg}`).join('\n')}\n\nDevuelve el HTML COMPLETO corregido, empezando por <!doctype html>, sin markdown ni explicación.\n\nHTML:\n${html}`;
-          const repaired = await generateWithContinuation({
-            callOnce, prompt: repairPrompt, isComplete, stripFences,
-            continuePrompt: 'Continúa EXACTAMENTE donde quedó, sin repetir, hasta cerrar </html>.'
-          });
-          if (repaired.text && !repaired.truncated) {
-            const reQa = auditLanding(repaired.text);
-            if (reQa.score >= qa.score) { html = repaired.text; qa = reQa; }
-          }
-        } catch (_) { /* la reparación es best-effort; si falla, va lo que había */ }
-      }
-
-      // Inyecta el runtime de Tailwind (bundle LOCAL, sirve offline en el .exe
-      // white-label — nada de CDN). El modelo escribe clases de utilidad y el
-      // motor las compila en el browser. Así la calidad de diseño deja de
-      // depender de que el modelo escriba CSS a mano en cada landing.
-      // Runtime de Tailwind + fuentes locales (offline). Las font-family las
-      // elige el director de arte; acá solo garantizamos que estén disponibles
-      // sin depender de Google (white-label offline).
-      function injectAssets(doc) {
-        if (/vendor\/tailwind\.js/.test(doc)) return doc; // ya inyectado
-        const tags = [
-          '<link rel="stylesheet" href="/public/vendor/fonts.css">',
-          '<script src="/public/vendor/tailwind.js"></script>'
-        ].join('\n');
-        if (/<head[^>]*>/i.test(doc)) return doc.replace(/<head[^>]*>/i, (m) => `${m}\n${tags}`);
-        if (/<html[^>]*>/i.test(doc)) return doc.replace(/<html[^>]*>/i, (m) => `${m}\n<head>\n${tags}\n</head>`);
-        return `${tags}\n${doc}`;
-      }
-      html = injectAssets(html);
-
-      const previewsDir = path.join(dataDir, 'previews');
-      fs.mkdirSync(previewsDir, { recursive: true });
-      const fileName = `preview_${Date.now()}_${Math.random().toString(16).slice(2, 8)}.html`;
-      fs.writeFileSync(path.join(previewsDir, fileName), html, 'utf-8');
-      const payload = { url: `/preview/${fileName}`, title: String(input.title || 'Vista previa') };
-      eventBus.emit('hud_show_preview', payload);
-      return { ok: true, ...payload, bytes: html.length, qa: { score: qa.score, summary: qa.summary, issues: qa.issues } };
-    }
-  });
+  // Módulo DISEÑO (primer módulo-agente): registra sus tools. Ver src/modules/design/.
+  for (const tool of createDesignModule({
+    modelProvider, dataDir, eventBus, brandTools,
+    generateWithContinuation, contentHonestyClause: CONTENT_HONESTY_CLAUSE
+  }).tools) {
+    toolRegistry.register(tool);
+  }
 
   // Visión genérica: lee imágenes del inbox (boletas, documentos, fotos) con el
   // modelo si soporta multimodal (Anthropic hoy). Pieza genérica — Jarvis decide

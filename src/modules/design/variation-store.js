@@ -4,7 +4,7 @@
 // combos usados por clave (marca/cliente) para que el próximo los EVITE.
 const fs = require('fs');
 const path = require('path');
-const { writeJsonAtomic } = require('../core/atomic-json');
+const { writeJsonAtomic } = require('../../core/atomic-json');
 
 function storePath(dataDir) { return path.join(dataDir, 'design-variations.json'); }
 
