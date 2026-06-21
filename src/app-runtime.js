@@ -445,7 +445,7 @@ function createRuntime(options = {}) {
   // Módulo DISEÑO (especialista "Alex"). Se crea una vez: se pasa al
   // conversationRuntime para el context-swap por dominio y se registran sus tools.
   const designModule = createDesignModule({
-    modelProvider, dataDir, eventBus, brandTools,
+    modelProvider, dataDir, eventBus, brandTools, credentialVault,
     generateWithContinuation, contentHonestyClause: CONTENT_HONESTY_CLAUSE
   });
   // Módulo MARKETING (especialista "Mara"): dueño del grupo social.*.
