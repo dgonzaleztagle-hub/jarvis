@@ -1,4 +1,5 @@
 const test = require('node:test');
+const { mock } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
@@ -23,36 +24,48 @@ function fakeRuntime(usageMeter, costUsd) {
 }
 
 test('maxCostPerDayUsd: corte automático cuando el gasto del día lo cruza, aunque queden corridas/día', async () => {
-  const dataDir = tempDataDir();
-  const usageMeter = new UsageMeter({ dataDir });
-  const store = new AgentStore({ dataDir });
-  const runtime = fakeRuntime(usageMeter, 0.10);
-  const scheduler = new AgentScheduler({ store, conversationRuntime: runtime, eventBus: { emit() {} }, usageMeter });
+  // Reloj congelado a mediodía: runAgent estampa el costo con `new Date()`
+  // interno, y el test mira `now + 1h`. Si el test corre cerca de medianoche
+  // (Chile), ese +1h cruza de día y el presupuesto diario se resetea (correcto
+  // en producción: hay un test aparte para eso) — lo que hacía fallar ESTE test
+  // de forma espuria entre las 23:00 y 00:00. Congelando el reloj el día es
+  // estable y la prueba aísla de verdad el corte por costo.
+  mock.timers.enable({ apis: ['Date'], now: new Date('2026-06-15T12:00:00-04:00').getTime() });
+  try {
+    const dataDir = tempDataDir();
+    const usageMeter = new UsageMeter({ dataDir });
+    const store = new AgentStore({ dataDir });
+    const runtime = fakeRuntime(usageMeter, 0.10);
+    const scheduler = new AgentScheduler({ store, conversationRuntime: runtime, eventBus: { emit() {} }, usageMeter });
 
-  const agent = store.create({
-    name: 'Vigia con presupuesto',
-    goal: 'Revisar algo',
-    schedule: { type: 'interval', minutes: 5 },
-    maxRunsPerDay: 10,
-    maxCostPerDayUsd: 0.15
-  });
+    const agent = store.create({
+      name: 'Vigia con presupuesto',
+      goal: 'Revisar algo',
+      schedule: { type: 'interval', minutes: 5 },
+      maxRunsPerDay: 10,
+      maxCostPerDayUsd: 0.15
+    });
 
-  // Punto en el futuro: lejos de lastRunAt para que el intervalo (5 min) ya
-  // haya pasado y shouldRun no quede bloqueado por eso, solo por el costo.
-  const future = new Date(Date.now() + 60 * 60 * 1000);
+    // Punto en el futuro: lejos de lastRunAt para que el intervalo (5 min) ya
+    // haya pasado y shouldRun no quede bloqueado por eso, solo por el costo.
+    // Mismo día que la corrida (reloj congelado), así no se resetea el costo.
+    const future = new Date(Date.now() + 60 * 60 * 1000);
 
-  // Primera corrida: gasta 0.10 de 0.15 — queda margen, sigue corriendo.
-  await scheduler.runAgent(agent.id);
-  let updated = store.get(agent.id);
-  assert.ok(Math.abs(updated.costToday - 0.10) < 1e-9);
-  assert.equal(scheduler.shouldRun(updated, future), true);
+    // Primera corrida: gasta 0.10 de 0.15 — queda margen, sigue corriendo.
+    await scheduler.runAgent(agent.id);
+    let updated = store.get(agent.id);
+    assert.ok(Math.abs(updated.costToday - 0.10) < 1e-9);
+    assert.equal(scheduler.shouldRun(updated, future), true);
 
-  // Segunda corrida: gasta otros 0.10 → acumulado 0.20 >= 0.15.
-  await scheduler.runAgent(agent.id);
-  updated = store.get(agent.id);
-  assert.ok(updated.costToday >= 0.15);
-  assert.equal(updated.runsToday < updated.maxRunsPerDay, true); // quedan corridas/día
-  assert.equal(scheduler.shouldRun(updated, future), false); // pero el corte de costo lo detiene
+    // Segunda corrida: gasta otros 0.10 → acumulado 0.20 >= 0.15.
+    await scheduler.runAgent(agent.id);
+    updated = store.get(agent.id);
+    assert.ok(updated.costToday >= 0.15);
+    assert.equal(updated.runsToday < updated.maxRunsPerDay, true); // quedan corridas/día
+    assert.equal(scheduler.shouldRun(updated, future), false); // pero el corte de costo lo detiene
+  } finally {
+    mock.timers.reset();
+  }
 });
 
 test('sin maxCostPerDayUsd, el gasto no limita las corridas (solo maxRunsPerDay)', async () => {

@@ -422,7 +422,7 @@ function createGoogleCalendarTools({ authFactory }) {
     },
     {
       name: 'google.calendar.create_event',
-      description: 'Create a Google Calendar event with optional guests and Google Meet link.',
+      description: 'Create a Google Calendar event. Only summary, startTime and endTime are required; guests are OPTIONAL. A request like "agéndame una reunión CON Tomás" means block the time on the user\'s calendar — do NOT require or ask for the other person\'s email. Add guests ONLY if the user gives emails or explicitly asks to send an invitation. Supports optional Google Meet link.',
       risk: 'medium',
       permissions: ['google:calendar:write'],
       required: ['summary', 'startTime', 'endTime'],
