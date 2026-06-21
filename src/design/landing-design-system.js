@@ -47,6 +47,113 @@ const COLOR = [
 const SERIOUS_HINT = { layouts: ['Swiss Minimal', 'Brutalist Grid', 'Cinematic Fullscreen'], typo: ['The Diplomat', 'The Industrial', 'The Disruptor'], motion: ['Solid Ground'], color: ['Monocromo Puro', 'Corporate Cold', 'Deep Earth'] };
 const CREATIVE_HINT = { layouts: ['Asimetría Radical', 'Fluid Magazine', 'Chaos Collage', 'Cinematic Fullscreen'], typo: ['The Editorial', 'The Friendly', 'The Disruptor', 'The Diplomat'], motion: ['Liquid Flow', 'Snap & Punch', 'Theater Curtain'], color: ['Deep Earth', 'Neón Tóxico', 'Pastel Suave', 'Monocromo Puro'] };
 
+// ── Capa de CONTENIDO: librería de conceptos por nicho (extraída de HojaCero) ───
+const NICHE_CONCEPTS = require('./niche-concepts');
+
+// Términos (es-CL) que mapean un brief a uno de los 12 nichos de la librería.
+const NICHE_KEYWORDS = {
+  'gastronomía': ['restaurant', 'restaurante', 'café', 'cafeter', 'cocina', 'gastro', 'bar', 'comida', 'menú', 'chef', 'pasteler', 'panader', 'food', 'sushi', 'pizz', 'parrilla'],
+  'turismo': ['turismo', 'hotel', 'hostal', 'viaje', 'tour', 'cabañas', 'lodge', 'destino', 'aventura', 'travel'],
+  'moda': ['moda', 'ropa', 'tienda de ropa', 'fashion', 'streetwear', 'boutique', 'diseño de vestuario', 'marca de ropa', 'accesorios'],
+  'automotriz': ['auto', 'automotriz', 'vehículo', 'taller mecánic', 'concesionari', 'tuning', 'car', 'neumátic', 'repuestos'],
+  'legal': ['abogad', 'legal', 'jurídic', 'estudio jurídico', 'notarí', 'litig', 'penal', 'derecho', 'law'],
+  'real estate': ['inmobiliari', 'propiedad', 'bienes raíces', 'real estate', 'corredora', 'arriendo', 'depto', 'departamento', 'casa en venta', 'proyecto inmobiliario', 'edificio'],
+  'tech': ['saas', 'software', 'app', 'startup', 'plataforma', 'api', 'dev', 'tecnológic', 'fintech', 'ciberseguridad'],
+  'consultoría': ['consultor', 'asesorí', 'coaching', 'estrategia', 'capacitación', 'consultora', 'agencia de consult'],
+  'salud': ['clínic', 'salud', 'médic', 'dental', 'dentista', 'kinesi', 'spa', 'bienestar', 'psicólog', 'nutri', 'estétic'],
+  'educación': ['colegio', 'escuela', 'educac', 'curso', 'bootcamp', 'academia', 'instituto', 'edtech', 'preuniversitario', 'jardín infantil'],
+  'construcción': ['construc', 'constructora', 'remodelac', 'arquitect', 'obra', 'edificación', 'ingeniería civil', 'maestro'],
+  'fitness': ['gimnasio', 'gym', 'fitness', 'crossfit', 'yoga', 'pilates', 'entrenamiento', 'box', 'personal trainer']
+};
+
+// Nichos que por defecto van por la rama SERIOUS del motor de variabilidad.
+const SERIOUS_NICHES = new Set(['legal', 'real estate', 'tech', 'consultoría', 'salud', 'construcción']);
+
+// Señales en español por concepto: los subtipos de la librería vienen en inglés
+// (corporate/big firm), así que esto permite que un brief en es-CL elija el
+// concepto FINO correcto dentro del nicho (ej: "abogado penal" → Legal Drama).
+const SUBTYPE_SIGNALS = {
+  'Midnight Theatre': ['noche', 'nocturn', 'exclusiv', 'coctel', 'cóctel', 'cena', 'elegante', 'fine dining'],
+  'Tuscan Warmth': ['rústic', 'rustic', 'familiar', 'casero', 'tradicional', 'almuerzo', 'trattoria', 'hogareñ'],
+  'Avant-Garde Lab': ['experimental', 'autor', 'vanguardia', 'moderno', 'molecular', 'especialidad', 'degustación'],
+  'Wanderlust Cinema': ['aventura', 'naturaleza', 'trekking', 'montañ', 'outdoor', 'expedición', 'patagonia'],
+  'Local Insider': ['ciudad', 'urbano', 'cultura', 'city tour', 'local', 'barrio'],
+  'Luxury Escape': ['hotel', 'lujo', 'resort', 'boutique', 'cabañas', 'cinco estrellas', 'exclusiv'],
+  'Runway Editorial': ['alta costura', 'minimalista', 'editorial', 'pasarela', 'diseñador', 'atelier'],
+  'Lifestyle Brand': ['lifestyle', 'comercial', 'casual', 'accesible', 'cotidian'],
+  'Streetwear Drop': ['streetwear', 'urban', 'hype', 'drop', 'sneaker', 'calle', 'cápsula'],
+  'Performance Theatre': ['deportiv', 'tuning', 'performance', 'carrera', 'potencia', 'racing'],
+  'Trusted Dealer': ['concesionari', 'venta', 'familiar', 'confiable', 'usados', 'financiamiento'],
+  'Collector Gallery': ['clásic', 'colección', 'vintage', 'lujo', 'exclusiv', 'coleccionista'],
+  'Swiss Authority': ['corporativ', 'empresas', 'transaccion', 'firma', 'internacional', 'sociedades', 'tributari'],
+  'Legal Drama': ['penal', 'litig', 'juicio', 'demanda', 'criminal', 'defensa', 'tribunal'],
+  'TechLaw': ['startup', 'patente', 'propiedad intelectual', 'innovación', 'tecnológic', 'marcas'],
+  'Architectural Luxury': ['lujo', 'exclusiv', 'arquitect', 'premium', 'alto estándar', 'penthouse'],
+  'Interactive Map': ['proyecto', 'sector', 'mapa', 'desarrollo', 'loteo', 'condominio'],
+  'Investment Dashboard': ['inversión', 'comercial', 'rentabilidad', 'oficinas', 'renta', 'plusvalía'],
+  'Product-Led Growth': ['saas', 'producto', 'plataforma', 'suscripción', 'onboarding'],
+  'Developer First': ['api', 'developer', 'devtools', 'sdk', 'código', 'integración', 'documentación'],
+  'Enterprise Trust': ['enterprise', 'seguridad', 'compliance', 'corporativ', 'infraestructura'],
+  'Transformation Story': ['estrategia', 'transformación', 'cambio', 'estratégic'],
+  'Workshop Energy': ['capacitación', 'taller', 'agile', 'entrenamiento', 'workshop', 'facilitación'],
+  'Thought Leader': ['marca personal', 'conferencista', 'speaker', 'experto', 'autor', 'mentor'],
+  'Future Clinical': ['clínic', 'centro médico', 'moderno', 'tecnológic', 'imagenología', 'especialidades'],
+  'Holistic Wellness': ['spa', 'bienestar', 'holístic', 'terapia', 'relajación', 'masaje', 'alternativa'],
+  'Smile Gallery': ['dental', 'dentista', 'sonrisa', 'estétic', 'ortodoncia', 'implante'],
+  'Future Learning': ['edtech', 'online', 'plataforma', 'digital', 'e-learning'],
+  'Career Accelerator': ['bootcamp', 'profesional', 'carrera', 'intensivo', 'empleabilidad', 'diplomado'],
+  'Learning Platform': ['colegio', 'escuela', 'niñ', 'infantil', 'jardín', 'preescolar', 'kínder'],
+  'Master Builder': ['residencial', 'casa', 'premium', 'alto estándar', 'vivienda', 'mansión'],
+  'TechBuild': ['comercial', 'ingeniería', 'obra', 'industrial', 'edificio', 'infraestructura'],
+  'Heritage Craftsman': ['remodelación', 'renovación', 'restauración', 'artesanal', 'patrimonial', 'ampliación'],
+  'Transformation Energy': ['crossfit', 'intensidad', 'funcional', 'hiit', 'box', 'wod'],
+  'Wellness Sanctuary': ['yoga', 'pilates', 'bienestar', 'meditación', 'relajación', 'mindfulness'],
+  'Performance Lab': ['rendimiento', 'ciencia', 'atleta', 'performance', 'kinesi', 'deportiv']
+};
+
+function norm(s) {
+  return String(s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+// Términos largos = match por prefijo/raíz (cafeter→cafetería); términos cortos
+// (≤4) = palabra COMPLETA, para que "bar" no matchee "barrio" ni "spa" "espacio".
+function tokenScore(brief, tokens) {
+  const s = norm(brief);
+  let score = 0;
+  for (const raw of tokens) {
+    const t = norm(raw);
+    if (!t) continue;
+    const re = t.length <= 4 ? new RegExp(`\\b${t}\\b`) : new RegExp(`\\b${t}`);
+    if (re.test(s)) score += 1;
+  }
+  return score;
+}
+
+// Elige el concepto de contenido que mejor calza con el brief. Primero detecta el
+// nicho; dentro del nicho, afina por subtype/keywords; empates → al azar (varía).
+function matchConcept(brief = '') {
+  let bestNiche = null;
+  let bestNicheScore = 0;
+  for (const [niche, kws] of Object.entries(NICHE_KEYWORDS)) {
+    const sc = tokenScore(brief, kws);
+    if (sc > bestNicheScore) { bestNicheScore = sc; bestNiche = niche; }
+  }
+  if (!bestNiche) return null;
+
+  const candidates = NICHE_CONCEPTS.filter((c) => c.niche === bestNiche);
+  if (candidates.length === 0) return null;
+
+  let best = [];
+  let bestScore = -1;
+  for (const c of candidates) {
+    // Señales en español (peso x2, son las más precisas) + tokens del subtipo/keywords en inglés.
+    const enTokens = `${c.subtype} ${c.keywords}`.toLowerCase().split(/[\s,/]+/).filter((t) => t.length > 3);
+    const sc = tokenScore(brief, SUBTYPE_SIGNALS[c.name] || []) * 2 + tokenScore(brief, enTokens);
+    if (sc > bestScore) { bestScore = sc; best = [c]; }
+    else if (sc === bestScore) best.push(c);
+  }
+  return pick(best); // empate → variabilidad (deja variar el ángulo dentro del nicho)
+}
+
 function pick(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
@@ -78,9 +185,16 @@ function guessNiche(brief = '') {
 // Construye la directiva de diseño que se antepone al prompt de generación.
 // brandColors opcional: { primary, secondary, ... } para forzar paleta de marca.
 function buildDesignDirective({ brief = '', brandColors = null } = {}) {
-  const niche = guessNiche(brief);
+  // Capa de contenido: concepto por nicho (HojaCero). Si calza, además define si
+  // el motor visual va por la rama SERIOUS o CREATIVE.
+  const concept = matchConcept(brief);
+  const niche = concept ? (SERIOUS_NICHES.has(concept.niche) ? 'SERIOUS' : 'CREATIVE') : guessNiche(brief);
   const seeds = rollSeeds(niche);
-  const fonts = `${seeds.typography.header}, ${seeds.typography.body}`;
+
+  const conceptBlock = concept ? `
+
+CONCEPTO DE CONTENIDO — "${concept.name}" (calza con el rubro "${concept.niche}${concept.subtype ? ` / ${concept.subtype}` : ''}"). Gobierna el QUÉ se dice: la voz, el hero, las secciones y el ángulo. La dirección de arte de arriba gobierna el CÓMO se ve y MANDA si hay conflicto visual. Adáptalo al cliente concreto del brief (nombre, ciudad, detalles) en español de Chile; las "SECTIONS" son la espina dorsal; traduce cualquier "IMAGES/ASSET DIRECTION" a color, gradientes y formas (no uses imágenes externas):
+${concept.content}` : '';
 
   const paletteLine = brandColors && (brandColors.primary || brandColors.accent)
     ? `PALETA: usa los colores de marca del cliente como base — primario ${brandColors.primary || ''} ${brandColors.secondary ? `/ secundario ${brandColors.secondary}` : ''} ${brandColors.accent ? `/ acento ${brandColors.accent}` : ''}. La estrategia "${seeds.color.name}" guía la intensidad, no pisa la marca.`
@@ -111,12 +225,14 @@ FÍSICA DE DISEÑO (reglas duras anti-feo):
 - BENTO NARRATIVE: nunca muros de texto. Más de 2 párrafos → tarjetas/bento (icono o número + título + bajada).
 - 12 COLUMNAS: piensa el desktop en 12 columnas, usa justify-between, evita elementos huérfanos flotando.
 - CONTENIDO REAL: copy concreto y específico del rubro en español de Chile (sin acento de España), nada de relleno.
+${conceptBlock}
 
 No expliques nada de esto en la salida; tradúcelo en el HTML.`;
 }
 
 module.exports = {
   buildDesignDirective,
+  matchConcept,
   rollSeeds,
   guessNiche,
   LAYOUTS,
