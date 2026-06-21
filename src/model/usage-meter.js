@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { writeJsonAtomic } = require('../core/atomic-json');
+const { dayKey } = require('../utils/time');
 
 class UsageMeter {
   constructor({ dataDir }) {
@@ -45,6 +46,16 @@ class UsageMeter {
     );
     this.write(data);
     return normalized;
+  }
+
+  // Gasto total (todos los propósitos/agentes) en un día de Chile (default
+  // hoy). Para el tope diario GLOBAL — el tope por-agente ya existe aparte
+  // (agent-store.js) y no necesita esto, porque su delta es por corrida.
+  getCostForDate(dateKeyValue = dayKey()) {
+    const data = this.read();
+    return data.entries
+      .filter((e) => dayKey(new Date(e.createdAt)) === dateKeyValue)
+      .reduce((sum, e) => sum + (Number(e.costUsd) || 0), 0);
   }
 
   summary() {

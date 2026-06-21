@@ -43,6 +43,7 @@ const { PresenterRegistry } = require('./presenters/presenter-registry');
 const { registerGooglePresenters } = require('./presenters/google-presenters');
 const { AgentStore } = require('./agents/agent-store');
 const { AgentScheduler } = require('./agents/agent-scheduler');
+const { BudgetConfig } = require('./agents/budget-config');
 const { createAgentTools } = require('./agents/agent-tools');
 const { executeTask } = require('./agents/task-executor');
 const { createVisionTools } = require('./vision/vision-tools');
@@ -498,8 +499,9 @@ function createRuntime(options = {}) {
   });
 
   const agentStore = new AgentStore({ dataDir });
-  const agentScheduler = new AgentScheduler({ store: agentStore, conversationRuntime, eventBus, usageMeter });
-  for (const tool of createAgentTools({ store: agentStore, scheduler: agentScheduler })) {
+  const budgetConfig = new BudgetConfig({ dataDir });
+  const agentScheduler = new AgentScheduler({ store: agentStore, conversationRuntime, eventBus, usageMeter, budgetConfig });
+  for (const tool of createAgentTools({ store: agentStore, scheduler: agentScheduler, budgetConfig, usageMeter })) {
     toolRegistry.register(tool);
   }
 
@@ -761,6 +763,18 @@ function createRuntime(options = {}) {
   };
   eventBus.on('agent_run_completed', (event) => queueAgentNotification(event, 'completed'));
   eventBus.on('agent_run_failed', (event) => queueAgentNotification(event, 'failed'));
+  // Alerta de presupuesto (por-agente al 80% de su tope, o global): a
+  // diferencia de las corridas, esta SÍ se anuncia aunque no haya sido
+  // programada — es justo la clase de aviso que no puede esperar a que el
+  // usuario pregunte.
+  eventBus.on('agent_budget_warning', (event) => {
+    const w = event.payload || {};
+    const text = w.scope === 'global'
+      ? `Aviso de presupuesto: el gasto de hoy entre todos tus agentes llegó a $${w.spent} de un tope global de $${w.limit}.`
+      : `Aviso de presupuesto: tu agente ${w.name} lleva $${w.spent} de hoy, cerca de su tope de $${w.limit}/día.`;
+    agentNotifications.push({ text, name: w.name || 'presupuesto', agentId: w.agentId || null, status: 'budget_warning', at: w.at });
+    if (agentNotifications.length > 50) agentNotifications.splice(0, agentNotifications.length - 50);
+  });
   const drainAgentNotifications = () => agentNotifications.splice(0, agentNotifications.length);
 
   return {

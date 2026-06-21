@@ -12,14 +12,40 @@ function localHHMM(now) {
 }
 
 class AgentScheduler {
-  constructor({ store, conversationRuntime, eventBus, usageMeter, intervalMs = 60_000 }) {
+  constructor({ store, conversationRuntime, eventBus, usageMeter, budgetConfig, intervalMs = 60_000 }) {
     this.store = store;
     this.conversationRuntime = conversationRuntime;
     this.eventBus = eventBus;
     this.usageMeter = usageMeter || null;
+    this.budgetConfig = budgetConfig || null;
     this.intervalMs = intervalMs;
     this.timer = null;
     this.running = new Set();
+    // Dedup en memoria: no repetir el aviso de tope global en cada corrida del
+    // mismo día (a diferencia del tope por-agente, que sí persiste en disco).
+    this._globalWarnedDate = null;
+  }
+
+  // Tope diario GLOBAL (todos los agentes combinados) — corte duro antes de
+  // correr NADA, automático o manual. El tope por-agente (maxCostPerDayUsd)
+  // sigue aparte y se revisa independientemente en shouldRun().
+  globalCapExceeded(now = new Date()) {
+    if (!this.budgetConfig || !this.usageMeter) return false;
+    const cap = this.budgetConfig.getGlobalDailyCap();
+    if (cap == null) return false;
+    return this.usageMeter.getCostForDate(todayKey(now)) >= cap;
+  }
+
+  maybeWarnGlobalBudget(now = new Date()) {
+    if (!this.budgetConfig || !this.usageMeter || !this.eventBus) return;
+    const cap = this.budgetConfig.getGlobalDailyCap();
+    if (cap == null) return;
+    const spent = this.usageMeter.getCostForDate(todayKey(now));
+    if (spent < cap * 0.8) return;
+    const today = todayKey(now);
+    if (this._globalWarnedDate === today) return;
+    this._globalWarnedDate = today;
+    this.eventBus.emit('agent_budget_warning', { scope: 'global', spent: Number(spent.toFixed(4)), limit: cap, at: now.toISOString() });
   }
 
   start() {
@@ -38,6 +64,7 @@ class AgentScheduler {
 
   shouldRun(agent, now) {
     if (!agent.enabled) return false;
+    if (this.globalCapExceeded(now)) return false;
     const schedule = agent.schedule || { type: 'manual' };
     if (schedule.type === 'manual') return false;
 
@@ -73,6 +100,11 @@ class AgentScheduler {
     const agent = typeof agentOrId === 'string' ? this.store.get(agentOrId) : agentOrId;
     if (!agent) throw new Error(`AGENT_NOT_FOUND: ${agentOrId}`);
     if (this.running.has(agent.id)) throw new Error(`AGENT_ALREADY_RUNNING: ${agent.name}`);
+    // Corte duro también para corridas manuales/de validación — el tope
+    // global no se salta porque alguien lo dispare a mano.
+    if (this.globalCapExceeded(new Date())) {
+      throw new Error('GLOBAL_DAILY_BUDGET_EXCEEDED: se alcanzó el tope diario de gasto configurado para el conjunto de agentes.');
+    }
 
     this.running.add(agent.id);
     const now = new Date();
@@ -129,10 +161,21 @@ class AgentScheduler {
     const costAfter = this.usageMeter.summary().totals.costUsd;
     const runCostUsd = Math.max(0, costAfter - costBefore);
     const sameDay = agent.costTodayDate === todayKey(now);
-    this.store.update(agent.id, {
-      costToday: (sameDay ? agent.costToday : 0) + runCostUsd,
-      costTodayDate: todayKey(now)
-    });
+    const costToday = (sameDay ? agent.costToday : 0) + runCostUsd;
+    const today = todayKey(now);
+    const updated = this.store.update(agent.id, { costToday, costTodayDate: today });
+
+    // Alerta por-agente al 80% de su propio tope — una vez por día (dedup en
+    // disco vía budgetWarnedDate, sobrevive a reinicios del proceso).
+    if (agent.maxCostPerDayUsd != null && costToday >= agent.maxCostPerDayUsd * 0.8 && updated.budgetWarnedDate !== today) {
+      this.store.update(agent.id, { budgetWarnedDate: today });
+      this.eventBus?.emit('agent_budget_warning', {
+        scope: 'agent', agentId: agent.id, name: agent.name,
+        spent: Number(costToday.toFixed(4)), limit: agent.maxCostPerDayUsd, at: now.toISOString()
+      });
+    }
+
+    this.maybeWarnGlobalBudget(now);
   }
 }
 

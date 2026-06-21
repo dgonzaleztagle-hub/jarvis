@@ -13,8 +13,35 @@ function summarizeAgent(agent) {
   };
 }
 
-function createAgentTools({ store, scheduler }) {
+function createAgentTools({ store, scheduler, budgetConfig, usageMeter }) {
   return [
+    {
+      name: 'agents.set_daily_budget',
+      description: 'Configurar (o quitar) el tope diario de gasto GLOBAL para TODOS los agentes combinados — distinto del tope por-agente (maxCostPerDayUsd en agents.create). Si se cruza, ningún agente corre más ese día, ni programado ni manual. Input: { usdPerDay: número, o null para quitar el tope }.',
+      risk: 'medium',
+      permissions: ['agents:manage'],
+      execute: async (input) => {
+        if (!budgetConfig) throw new Error('BUDGET_CONFIG_NOT_AVAILABLE');
+        const cap = budgetConfig.setGlobalDailyCap(input.usdPerDay ?? null);
+        return { ok: true, globalDailyCapUsd: cap, message: cap == null ? 'Tope global de agentes removido.' : `Tope global de agentes: $${cap}/día.` };
+      }
+    },
+    {
+      name: 'agents.budget_status',
+      description: 'Ver el estado del presupuesto: tope global configurado (si hay), gasto de hoy entre todos los agentes, y si está bloqueado por haber cruzado el tope.',
+      risk: 'low',
+      permissions: [],
+      execute: async () => {
+        const globalDailyCapUsd = budgetConfig?.getGlobalDailyCap() ?? null;
+        const spentToday = usageMeter?.getCostForDate() ?? 0;
+        return {
+          globalDailyCapUsd,
+          spentToday: Number(spentToday.toFixed(4)),
+          blocked: globalDailyCapUsd != null && spentToday >= globalDailyCapUsd,
+          agents: store.list().map((a) => ({ id: a.id, name: a.name, maxCostPerDayUsd: a.maxCostPerDayUsd ?? null, costToday: a.costToday || 0 }))
+        };
+      }
+    },
     {
       name: 'agents.create',
       description: 'Crear un agente automático con una misión recurrente. Input: { name, goal (misión en lenguaje natural, será el mensaje que el agente ejecuta), schedule: { type: "daily"|"interval"|"manual", at: "HH:MM" (daily), minutes: N (interval) }, maxRunsPerDay (opcional, default 4), maxCostPerDayUsd (opcional, tope de gasto diario en USD; si una corrida lo cruza, el agente deja de correr ese día aunque le queden corridas) }. Requiere confirmación del usuario antes de crear. Tras crearlo, el sistema corre la misión UNA VEZ de inmediato para validar que de verdad funciona — el resultado vuelve en "validation". Si "validation" muestra que falló por un problema de la propia misión (ej: URL/dominio que no existe, instrucción ambigua que no usó ninguna herramienta), corrige el goal con agents.update_goal y vuelve a probar con agents.run_now antes de responder al usuario. Si tras corregir una vez sigue sin funcionar, dilo explícitamente y pide al usuario lo que falte — no reportes "creado" sin contar cómo salió la prueba.',

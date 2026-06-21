@@ -7,6 +7,12 @@ const path = require('path');
 const { AgentStore } = require('../src/agents/agent-store');
 const { AgentScheduler } = require('../src/agents/agent-scheduler');
 const { UsageMeter } = require('../src/model/usage-meter');
+const { BudgetConfig } = require('../src/agents/budget-config');
+
+function fakeEventBus() {
+  const events = [];
+  return { emit: (type, payload) => events.push({ type, payload }), events };
+}
 
 function tempDataDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'jarvis-codex-test-'));
@@ -113,4 +119,78 @@ test('costToday se resetea al cambiar de día', async () => {
   // tratar el gasto acumulado como 0 para el cupo de hoy.
   const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
   assert.equal(scheduler.shouldRun(updated, tomorrow), true);
+});
+
+test('tope diario GLOBAL bloquea a TODOS los agentes aunque les quede cupo individual', async () => {
+  mock.timers.enable({ apis: ['Date'], now: new Date('2026-06-15T12:00:00-04:00').getTime() });
+  try {
+    const dataDir = tempDataDir();
+    const usageMeter = new UsageMeter({ dataDir });
+    const store = new AgentStore({ dataDir });
+    const budgetConfig = new BudgetConfig({ dataDir });
+    budgetConfig.setGlobalDailyCap(0.05);
+    const runtime = fakeRuntime(usageMeter, 0.10); // ya cruza el tope global en una corrida
+    const bus = fakeEventBus();
+    const scheduler = new AgentScheduler({ store, conversationRuntime: runtime, eventBus: bus, usageMeter, budgetConfig });
+
+    const agentA = store.create({ name: 'Agente A', goal: 'x', schedule: { type: 'interval', minutes: 5 }, maxRunsPerDay: 10 });
+    const agentB = store.create({ name: 'Agente B', goal: 'y', schedule: { type: 'interval', minutes: 5 }, maxRunsPerDay: 10 });
+
+    await scheduler.runAgent(agentA.id); // gasta 0.10, ya >= 0.05 global
+
+    const future = new Date(Date.now() + 60 * 60 * 1000);
+    assert.equal(scheduler.shouldRun(store.get(agentB.id), future), false, 'agente B nunca corrió, pero el tope global ya lo bloquea');
+    await assert.rejects(() => scheduler.runAgent(agentB.id), /GLOBAL_DAILY_BUDGET_EXCEEDED/);
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test('agent_budget_warning se emite al 80% del tope por-agente, una sola vez por dia', async () => {
+  mock.timers.enable({ apis: ['Date'], now: new Date('2026-06-15T12:00:00-04:00').getTime() });
+  try {
+    const dataDir = tempDataDir();
+    const usageMeter = new UsageMeter({ dataDir });
+    const store = new AgentStore({ dataDir });
+    const runtime = fakeRuntime(usageMeter, 0.09); // 90% de 0.10 en una sola corrida
+    const bus = fakeEventBus();
+    const scheduler = new AgentScheduler({ store, conversationRuntime: runtime, eventBus: bus, usageMeter });
+
+    const agent = store.create({ name: 'Agente con aviso', goal: 'x', schedule: { type: 'manual' }, maxRunsPerDay: 10, maxCostPerDayUsd: 0.10 });
+
+    await scheduler.runAgent(agent.id);
+    const warnings = bus.events.filter((e) => e.type === 'agent_budget_warning' && e.payload.scope === 'agent');
+    assert.equal(warnings.length, 1);
+    assert.equal(warnings[0].payload.agentId, agent.id);
+
+    // Otra corrida el mismo día: no se repite el aviso.
+    await scheduler.runAgent(agent.id);
+    const warningsAfter = bus.events.filter((e) => e.type === 'agent_budget_warning' && e.payload.scope === 'agent');
+    assert.equal(warningsAfter.length, 1, 'no debe repetir el aviso el mismo dia');
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test('agent_budget_warning global se emite al 80% del tope global', async () => {
+  mock.timers.enable({ apis: ['Date'], now: new Date('2026-06-15T12:00:00-04:00').getTime() });
+  try {
+    const dataDir = tempDataDir();
+    const usageMeter = new UsageMeter({ dataDir });
+    const store = new AgentStore({ dataDir });
+    const budgetConfig = new BudgetConfig({ dataDir });
+    budgetConfig.setGlobalDailyCap(1.0);
+    const runtime = fakeRuntime(usageMeter, 0.85);
+    const bus = fakeEventBus();
+    const scheduler = new AgentScheduler({ store, conversationRuntime: runtime, eventBus: bus, usageMeter, budgetConfig });
+
+    const agent = store.create({ name: 'Agente global', goal: 'x', schedule: { type: 'manual' }, maxRunsPerDay: 10 });
+    await scheduler.runAgent(agent.id);
+
+    const warnings = bus.events.filter((e) => e.type === 'agent_budget_warning' && e.payload.scope === 'global');
+    assert.equal(warnings.length, 1);
+    assert.ok(warnings[0].payload.spent >= 0.8);
+  } finally {
+    mock.timers.reset();
+  }
 });
