@@ -645,10 +645,14 @@ function createRuntime(options = {}) {
       }
 
       if (!html.trim() && brief) {
-        const genPrompt = `Genera un documento HTML COMPLETO y autocontenido para: ${brief}.
-DISEÑO (esto es lo que separa una landing pobre de una profesional): usa Tailwind CSS — clases de utilidad — para TODO el estilo. El runtime de Tailwind YA está inyectado en la página: NO agregues <style>, <link>, <script> ni el CDN, solo escribe el markup con clases.
-Apunta a nivel agencia, no a un borrador: jerarquía tipográfica fuerte (titulares grandes, text-balance), espaciado generoso (py-16/py-24 entre secciones), una paleta coherente de 2-3 colores (usa los tonos de marca si el brief los menciona; si no, elige una paleta acorde al rubro), secciones claras (hero con headline + subhead + CTA prominente, beneficios/features en grid, destacados o prueba social, cierre con CTA, footer), botones con hover/transición y bordes redondeados, sombras suaves, e imágenes con gradientes/placeholders elegantes (usa fondos de color o gradientes con Tailwind, no enlaces a imágenes externas). Totalmente responsive (mobile-first con sm/md/lg) y buen contraste/accesibilidad. Contenido realista en español (nada de "lorem ipsum").
-Devuelve SOLO el HTML empezando por <!doctype html>, sin markdown ni explicación. No incluyas el script de Tailwind: se inyecta solo.`;
+        const { buildDesignDirective } = require('./design/landing-design-system');
+        const designDirective = buildDesignDirective({ brief });
+        const genPrompt = `${designDirective}
+
+---
+
+Ahora genera el documento HTML COMPLETO y autocontenido para: ${brief}.
+TÉCNICA: usa Tailwind (clases de utilidad) para el layout y el grueso del estilo — el runtime de Tailwind YA está inyectado, NO agregues el script ni el CDN de Tailwind. SÍ carga las fuentes de Google Fonts con <link> en el <head> según la dirección de arte. Usa un único bloque <style> SOLO para lo que Tailwind no cubre (font-family de las fuentes elegidas, @keyframes de revelado, grano/textura, scroll-snap). No uses imágenes externas: resuelve lo visual con color, gradientes, formas y tipografía. Responsive mobile-first (sm/md/lg). Devuelve SOLO el HTML empezando por <!doctype html>, sin markdown ni explicación.`;
         try {
           const { text, truncated } = await generateWithContinuation({
             callOnce,
@@ -672,15 +676,14 @@ Devuelve SOLO el HTML empezando por <!doctype html>, sin markdown ni explicació
       // white-label — nada de CDN). El modelo escribe clases de utilidad y el
       // motor las compila en el browser. Así la calidad de diseño deja de
       // depender de que el modelo escriba CSS a mano en cada landing.
+      // Solo el runtime; las fuentes y la config tipográfica las decide el
+      // director de arte en el propio documento (evita pisar su font-family).
       function injectTailwind(doc) {
         if (/vendor\/tailwind\.js/.test(doc)) return doc; // ya inyectado
-        const tags = [
-          '<script src="/public/vendor/tailwind.js"></script>',
-          "<script>tailwind.config={theme:{extend:{fontFamily:{sans:['ui-sans-serif','system-ui','-apple-system','Segoe UI','Roboto','Helvetica','Arial','sans-serif']}}}}</script>"
-        ].join('\n');
-        if (/<head[^>]*>/i.test(doc)) return doc.replace(/<head[^>]*>/i, (m) => `${m}\n${tags}`);
-        if (/<html[^>]*>/i.test(doc)) return doc.replace(/<html[^>]*>/i, (m) => `${m}\n<head>\n${tags}\n</head>`);
-        return `${tags}\n${doc}`;
+        const tag = '<script src="/public/vendor/tailwind.js"></script>';
+        if (/<head[^>]*>/i.test(doc)) return doc.replace(/<head[^>]*>/i, (m) => `${m}\n${tag}`);
+        if (/<html[^>]*>/i.test(doc)) return doc.replace(/<html[^>]*>/i, (m) => `${m}\n<head>\n${tag}\n</head>`);
+        return `${tag}\n${doc}`;
       }
       html = injectTailwind(html);
 
