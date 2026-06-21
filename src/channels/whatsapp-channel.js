@@ -43,6 +43,15 @@ function toJid(phone) {
   return `${digits}@s.whatsapp.net`;
 }
 
+// Baileys expone el JID de la cuenta vinculada con un sufijo de DISPOSITIVO
+// (ej: "56999...05:25@s.whatsapp.net"). Ese ":25" hace que el JID NO sea un
+// destinatario válido: el socket acepta el envío sin tirar error pero el
+// mensaje no se entrega nunca (éxito mentiroso). Hay que sacar el ":device"
+// antes de usarlo como destinatario. Aplica a cualquier JID, no solo al propio.
+function stripDeviceSuffix(jid) {
+  return String(jid || '').replace(/:\d+(?=@)/, '');
+}
+
 class WhatsAppChannel {
   constructor({ dataDir, eventBus, contactResolver } = {}) {
     this.authDir = path.join(dataDir, 'whatsapp', 'auth');
@@ -290,8 +299,10 @@ class WhatsAppChannel {
 
     // 0. Auto-referencial: el usuario pide enviarse algo a sí mismo.
     // Baileys expone el JID de la cuenta vinculada en this.sock.user.id.
-    if (['self', 'yo', 'mi numero', 'a mi', 'a mí'].includes(needle)) {
-      const ownJid = this.sock?.user?.id;
+    if (['self', 'yo', 'mi numero', 'mi número', 'a mi', 'a mí', 'mismo', 'a mi mismo', 'a mí mismo'].includes(needle)) {
+      // sock.user.id trae el sufijo de dispositivo (":25@...") que rompe la
+      // entrega: hay que normalizarlo al JID del número limpio.
+      const ownJid = stripDeviceSuffix(this.sock?.user?.id);
       if (ownJid) return { jid: ownJid, label: 'tú (cuenta vinculada)' };
     }
 
@@ -330,8 +341,16 @@ class WhatsAppChannel {
     }
     const text = String(message || '').trim();
     if (!text) throw new Error('WHATSAPP_EMPTY_MESSAGE');
-    await this.sock.sendMessage(recipient.jid, { text });
-    return { sent: true, to: recipient.label, chars: text.length };
+    // Defensa en profundidad: cualquier jid (venga de donde venga) se normaliza
+    // sacando el sufijo de dispositivo antes de enviar.
+    const jid = stripDeviceSuffix(recipient.jid);
+    const sent = await this.sock.sendMessage(jid, { text });
+    // No mentir el éxito: Baileys devuelve el mensaje con un key.id al encolarlo.
+    // Si no vuelve ack, el envío no salió — reportarlo en vez de decir "ok".
+    if (!sent?.key?.id) {
+      throw new Error('WHATSAPP_SEND_NO_ACK: el envío no devolvió confirmación del servidor');
+    }
+    return { sent: true, to: recipient.label, chars: text.length, messageId: sent.key.id };
   }
 
   stop() {
@@ -342,4 +361,4 @@ class WhatsAppChannel {
   }
 }
 
-module.exports = { WhatsAppChannel, toJid, extractText };
+module.exports = { WhatsAppChannel, toJid, extractText, stripDeviceSuffix };

@@ -9,6 +9,8 @@
 // La decisión de confirmar vive en el policy-engine (no depende de que el
 // modelo se autodeclare) — ver classifyProvenance en src/core/provenance.js.
 
+const { stripDeviceSuffix } = require('./whatsapp-channel');
+
 function createWhatsAppTools({ channel }) {
   return [
     {
@@ -91,8 +93,12 @@ function createWhatsAppTools({ channel }) {
           if (!channel.connected || !channel.sock) throw new Error('WHATSAPP_NOT_CONNECTED: vincula la sesión primero (wa.link)');
           const text = String(input.message || '').trim();
           if (!text) throw new Error('WHATSAPP_EMPTY_MESSAGE');
-          await channel.sock.sendMessage(input._jid, { text });
-          return { sent: true, to: input.to, chars: text.length };
+          // Normalizar el jid (sacar sufijo de dispositivo) y no mentir el éxito:
+          // exigir ack del servidor, igual que channel.sendMessage.
+          const jid = stripDeviceSuffix(input._jid);
+          const sent = await channel.sock.sendMessage(jid, { text });
+          if (!sent?.key?.id) throw new Error('WHATSAPP_SEND_NO_ACK: el envío no devolvió confirmación del servidor');
+          return { sent: true, to: input.to, chars: text.length, messageId: sent.key.id };
         }
         return channel.sendMessage(input.to, input.message);
       }

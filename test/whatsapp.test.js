@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { PolicyEngine } = require('../src/core/policy-engine');
 const { ToolRegistry } = require('../src/core/tool-registry');
-const { toJid, extractText, WhatsAppChannel } = require('../src/channels/whatsapp-channel');
+const { toJid, extractText, WhatsAppChannel, stripDeviceSuffix } = require('../src/channels/whatsapp-channel');
 
 test('policy real (outbound + procedencia): wa.send_message compuesto exige confirmación, literal no', async () => {
   // Sin reglas ad-hoc: el mecanismo genérico outbound+provenance del
@@ -112,6 +112,31 @@ test('wa.send_message prepare: resuelve destinatario antes de confirmación', as
   assert.equal(confirmed.ok, true);
   assert.ok(sent[0]._jid === '56911111111@s.whatsapp.net');
   assert.match(sent[0].to, /Rosie/);
+});
+
+test('stripDeviceSuffix: saca el sufijo de dispositivo que rompe la entrega', () => {
+  // El bug real: sock.user.id viene con ":25" y el mensaje no se entrega.
+  assert.equal(stripDeviceSuffix('56999999905:25@s.whatsapp.net'), '56999999905@s.whatsapp.net');
+  assert.equal(stripDeviceSuffix('123456789012385:25@lid'), '123456789012385@lid');
+  // Sin sufijo: queda igual.
+  assert.equal(stripDeviceSuffix('56912345678@s.whatsapp.net'), '56912345678@s.whatsapp.net');
+  assert.equal(stripDeviceSuffix(''), '');
+});
+
+test('resolveRecipient self: normaliza el jid propio (sin sufijo de dispositivo)', async () => {
+  const os = require('os');
+  const path = require('path');
+  const fs = require('fs');
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-test-'));
+  const channel = new WhatsAppChannel({ dataDir, eventBus: { emit() {} } });
+  // Simular el sock vinculado con el jid propio CON sufijo de dispositivo.
+  channel.sock = { user: { id: '56988888805:25@s.whatsapp.net' } };
+
+  for (const alias of ['self', 'yo', 'a mí', 'mi número']) {
+    const res = await channel.resolveRecipient(alias);
+    assert.ok(res?.jid, `"${alias}" debe resolver al jid propio`);
+    assert.equal(res.jid, '56988888805@s.whatsapp.net', `"${alias}" no debe llevar sufijo de dispositivo`);
+  }
 });
 
 test('extractText: cubre tipos de mensaje comunes', () => {
