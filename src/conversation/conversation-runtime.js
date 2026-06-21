@@ -386,6 +386,12 @@ class ConversationRuntime {
   }
 
   async handleMessage({ text, channel = 'hud', context = {} }) {
+    // Namespace de memoria por agente: una corrida con channel:'agent' viaja
+    // con su agentId en el contexto. Lo que LEE sigue siendo la memoria global
+    // (igual que cualquier turno) MÁS su propio historial de corridas previas;
+    // lo que ESCRIBE queda taggeado con su agentId, así que no contamina la
+    // memoria principal ni la de otros agentes (ver knowledge-graph._visible).
+    const agentId = channel === 'agent' ? (context.agentId || null) : null;
     const turnStartedAt = Date.now();
     const conversationTask = this.taskRuntime.createTask({
       title: `Conversation from ${channel}`,
@@ -410,8 +416,8 @@ class ConversationRuntime {
       .join(' ');
 
     const memoryContext = this.contextAssembler
-      ? this.contextAssembler.assemble({ userText: text, recentHistory: recentHistoryText })
-      : (this.memoryStore?.buildPromptContext(`${text} ${recentHistoryText}`.trim(), { limit: 4 }) || '');
+      ? this.contextAssembler.assemble({ userText: text, recentHistory: recentHistoryText, agentId })
+      : (this.memoryStore?.buildPromptContext(`${text} ${recentHistoryText}`.trim(), { limit: 4, agentId }) || '');
     const workingContext = this.contextAssembler
       ? ''
       : (this.workingMemoryStore?.buildPromptContext(text, { limit: 3 }) || '');
@@ -530,7 +536,7 @@ class ConversationRuntime {
         if (channel !== 'agent') {
           this.pushHistory(text, conversationTask.result);
         }
-        this.scheduleBackgroundLearning({ text, channel, conversationTask, toolResults: [], recentHistory: recentHistoryText });
+        this.scheduleBackgroundLearning({ text, channel, conversationTask, toolResults: [], recentHistory: recentHistoryText, agentId });
         return conversationTask;
       }
 
@@ -803,7 +809,7 @@ class ConversationRuntime {
       this.pushHistory(text, conversationTask.result);
     }
 
-    this.scheduleBackgroundLearning({ text, channel, conversationTask, toolResults, recentHistory: recentHistoryText });
+    this.scheduleBackgroundLearning({ text, channel, conversationTask, toolResults, recentHistory: recentHistoryText, agentId });
 
     this.workingMemoryStore?.recordTurn({
       userText: text,
@@ -818,7 +824,7 @@ class ConversationRuntime {
   // Refuerzo + aprendizaje + captura de lecciones en juego, en background.
   // Se llama desde TODOS los caminos de cierre de turno para que el loop de
   // aprendizaje no se salte ninguno (incluida la recuperación por texto plano).
-  scheduleBackgroundLearning({ text, channel, conversationTask, toolResults = [], recentHistory = '' }) {
+  scheduleBackgroundLearning({ text, channel, conversationTask, toolResults = [], recentHistory = '', agentId = null }) {
     setImmediate(async () => {
       // 1) Refuerzo: el mensaje actual es la reacción al turno anterior.
       //    Evalúa las lecciones que estuvieron en juego antes de aprender nuevas.
@@ -861,7 +867,8 @@ class ConversationRuntime {
           modelProvider: this.modelProvider,
           memoryStore: this.memoryStore,
           knowledgeGraph: this.knowledgeGraph,
-          recentHistory
+          recentHistory,
+          agentId
         });
       } catch (err) {
         console.warn(`[jarvis-codex] extracción de conocimiento del turno falló: ${err.message}`);

@@ -96,9 +96,18 @@ class KnowledgeGraph {
     writeJsonAtomic(this.graphPath, graph);
   }
 
+  // Namespace de memoria por agente: un nodo escrito durante la corrida de un
+  // agente (sourceAgentId puesto) queda invisible para el contexto global y
+  // para los demás agentes — solo lo ve el MISMO agente en corridas futuras
+  // (memoria de trabajo propia). Nodos sin sourceAgentId (el caso normal:
+  // HUD/Telegram/WhatsApp) son visibles para todos, como siempre.
+  _visible(item, agentId) {
+    return !item.sourceAgentId || item.sourceAgentId === agentId;
+  }
+
   // --- Entidades ---
 
-  upsertEntity(type, name, properties = {}, source = 'manual') {
+  upsertEntity(type, name, properties = {}, source = 'manual', sourceAgentId = null) {
     const cleanType = ENTITY_TYPES.includes(type) ? type : 'concept';
     const cleanName = String(name || '').trim();
     if (!cleanName) return null;
@@ -148,6 +157,7 @@ class KnowledgeGraph {
       normalizedName,
       properties: properties || {},
       source,
+      sourceAgentId: sourceAgentId || null,
       createdAt: now,
       updatedAt: now
     };
@@ -192,6 +202,7 @@ class KnowledgeGraph {
       object: cleanObject,
       confidence: typeof options.confidence === 'number' ? options.confidence : 0.6,
       source: options.source || 'manual',
+      sourceAgentId: options.sourceAgentId || null,
       state,
       observations: 1,
       createdAt: now,
@@ -204,7 +215,7 @@ class KnowledgeGraph {
 
   // --- Relaciones ---
 
-  addRelationship(fromId, toId, type) {
+  addRelationship(fromId, toId, type, sourceAgentId = null) {
     const cleanType = String(type || '').trim();
     if (!fromId || !toId || !cleanType || fromId === toId) return null;
     const graph = this.read();
@@ -216,7 +227,7 @@ class KnowledgeGraph {
     );
     if (existing) return existing;
 
-    const rel = { id: genId('rel'), fromId, toId, type: cleanType, createdAt: new Date().toISOString() };
+    const rel = { id: genId('rel'), fromId, toId, type: cleanType, sourceAgentId: sourceAgentId || null, createdAt: new Date().toISOString() };
     graph.relationships.push(rel);
     this.write(graph);
     return rel;
@@ -242,6 +253,7 @@ class KnowledgeGraph {
       priority: ['low', 'normal', 'high', 'critical'].includes(options.priority) ? options.priority : 'normal',
       status: 'pending',
       source: options.source || 'manual',
+      sourceAgentId: options.sourceAgentId || null,
       createdAt: now,
       updatedAt: now
     };
@@ -286,10 +298,11 @@ class KnowledgeGraph {
     });
   }
 
-  findCommitments({ status } = {}) {
+  findCommitments({ status, agentId } = {}) {
     const graph = this.read();
     return graph.commitments
       .filter((c) => !status || c.status === status)
+      .filter((c) => this._visible(c, agentId))
       .sort((a, b) => {
         const aDue = a.whenDue ? new Date(a.whenDue).getTime() : Infinity;
         const bDue = b.whenDue ? new Date(b.whenDue).getTime() : Infinity;
@@ -297,11 +310,11 @@ class KnowledgeGraph {
       });
   }
 
-  getEntityProfile(entityId, graph = null) {
+  getEntityProfile(entityId, graph = null, agentId = null) {
     const g = graph || this.read();
     const entity = g.entities.find((e) => e.id === entityId);
     if (!entity) return null;
-    const facts = g.facts.filter((f) => f.subjectId === entityId && f.state !== 'rejected' && f.state !== 'obsolete');
+    const facts = g.facts.filter((f) => f.subjectId === entityId && f.state !== 'rejected' && f.state !== 'obsolete' && this._visible(f, agentId));
     const relationships = g.relationships
       .filter((r) => r.fromId === entityId || r.toId === entityId)
       .map((r) => {
@@ -318,20 +331,20 @@ class KnowledgeGraph {
   // Dado un mensaje, recupera los perfiles de entidad relevantes para inyectar
   // al prompt. Keyword matching sobre nombres y hechos (no embeddings — igual
   // que el resto de codex hoy).
-  retrieveForMessage(text, { limit = 5 } = {}) {
+  retrieveForMessage(text, { limit = 5, agentId = null } = {}) {
     const terms = extractTerms(text);
     const graph = this.read();
     const matched = new Map();
 
     if (looksLikeSelfQuery(text)) {
       const self = graph.entities.find((e) => e.source === 'user_profile' || e.properties?.isUser);
-      if (self) matched.set(self.id, self);
+      if (self && this._visible(self, agentId)) matched.set(self.id, self);
     }
 
     if (terms.length === 0 && matched.size === 0) return [];
 
     for (const entity of graph.entities) {
-      if (matched.has(entity.id)) continue;
+      if (matched.has(entity.id) || !this._visible(entity, agentId)) continue;
       const hitName = terms.some((t) => entity.normalizedName.includes(t));
       if (hitName) { matched.set(entity.id, entity); continue; }
     }
@@ -340,16 +353,17 @@ class KnowledgeGraph {
     // hecho, su entidad sujeto es relevante.
     for (const fact of graph.facts) {
       if (matched.size >= limit * 2) break;
+      if (!this._visible(fact, agentId)) continue;
       const corpus = normalizeText(`${fact.predicate} ${fact.object}`);
       if (terms.some((t) => corpus.includes(t))) {
         const entity = graph.entities.find((e) => e.id === fact.subjectId);
-        if (entity && !matched.has(entity.id)) matched.set(entity.id, entity);
+        if (entity && this._visible(entity, agentId) && !matched.has(entity.id)) matched.set(entity.id, entity);
       }
     }
 
     return [...matched.values()]
       .slice(0, limit)
-      .map((e) => this.getEntityProfile(e.id, graph))
+      .map((e) => this.getEntityProfile(e.id, graph, agentId))
       .filter(Boolean);
   }
 
@@ -374,8 +388,8 @@ class KnowledgeGraph {
   }
 
   // Resumen de compromisos abiertos para inyectar al prompt.
-  getOpenCommitmentsSummary({ limit = 6 } = {}) {
-    const open = this.findCommitments({}).filter((c) => c.status === 'pending' || c.status === 'active');
+  getOpenCommitmentsSummary({ limit = 6, agentId = null } = {}) {
+    const open = this.findCommitments({ agentId }).filter((c) => c.status === 'pending' || c.status === 'active');
     if (open.length === 0) return '';
     const lines = [];
     for (const c of open.slice(0, limit)) {

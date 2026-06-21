@@ -97,7 +97,11 @@ class AgentScheduler {
       // agente nuevo — recursión. Acá se ejecuta UNA pasada, ahora.
       const task = await this.conversationRuntime.handleMessage({
         text: `[Corrida automática del agente "${agent.name}". Esta es UNA ejecución de su misión: hazla AHORA con las herramientas disponibles y reporta el resultado. La recurrencia ya está programada — no crees, modifiques ni programes agentes.] Misión: ${agent.goal}`,
-        channel: 'agent'
+        channel: 'agent',
+        // Namespace de memoria: lo que esta corrida aprenda queda taggeado con
+        // este agentId, no contamina la memoria principal ni la de otros
+        // agentes — ver knowledge-graph.js _visible().
+        context: { agentId: agent.id }
       });
       const result = {
         status: task.status,

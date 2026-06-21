@@ -296,7 +296,7 @@ Máximo 3 items. Si no hay nada que valga la pena guardar, devuelve items: [].`,
 // esta función NO vuelva a llamar al modelo — solo corre heurísticas + guardas
 // de procedencia + persistencia. Si es null, mantiene el camino standalone
 // (llamada propia al modelo), que es el que usan los tests y el fallback.
-async function learnFromConversationTurn({ userText, assistantResult, toolResults, memoryStore, modelProvider, recentHistory = '', preExtractedItems = null }) {
+async function learnFromConversationTurn({ userText, assistantResult, toolResults, memoryStore, modelProvider, recentHistory = '', preExtractedItems = null, agentId = null }) {
   const intent = inferMemoryIntent(userText);
 
   // Heuristics still fire for explicit correction patterns — they're fast and precise
@@ -380,7 +380,8 @@ async function learnFromConversationTurn({ userText, assistantResult, toolResult
         capturedAt: new Date().toISOString(),
         excerpt: userText.slice(0, 240)
       }],
-      content: item.content || {}
+      content: item.content || {},
+      sourceAgentId: agentId
     });
     stored.push(record);
   }

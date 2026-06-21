@@ -130,13 +130,16 @@ function storeExtraction(graph, extraction, source = 'llm_extraction', options =
   const result = { entities: 0, facts: 0, relationships: 0, commitments: 0 };
   extraction = filterExtractionByGrounding(extraction || {}, options);
   const nameToId = new Map();
+  // Namespace de memoria por agente: si esta extracción viene de una corrida
+  // de agente, todo lo que se cree queda taggeado — ver knowledge-graph._visible.
+  const agentId = options.agentId || null;
 
   for (const e of safeArray(extraction.entities)) {
     if (!e || !e.name) continue;
     // El asistente y su UI no son entidades del mundo del usuario.
     if (SELF_ENTITY.test(String(e.name).trim())) continue;
     const type = ENTITY_TYPES.includes(e.type) ? e.type : 'concept';
-    const entity = graph.upsertEntity(type, e.name, e.properties || {}, source);
+    const entity = graph.upsertEntity(type, e.name, e.properties || {}, source, agentId);
     if (entity) { nameToId.set(String(e.name).trim().toLowerCase(), entity.id); result.entities += 1; }
   }
 
@@ -149,7 +152,8 @@ function storeExtraction(graph, extraction, source = 'llm_extraction', options =
     const fact = graph.addFact(subjectId, f.predicate, f.object, {
       confidence: typeof f.confidence === 'number' ? f.confidence : 0.6,
       source,
-      state: 'candidate'
+      state: 'candidate',
+      sourceAgentId: agentId
     });
     if (fact) result.facts += 1;
   }
@@ -159,7 +163,7 @@ function storeExtraction(graph, extraction, source = 'llm_extraction', options =
     const fromId = nameToId.get(String(r.from).trim().toLowerCase());
     const toId = nameToId.get(String(r.to).trim().toLowerCase());
     if (!fromId || !toId) continue;
-    const rel = graph.addRelationship(fromId, toId, r.type);
+    const rel = graph.addRelationship(fromId, toId, r.type, agentId);
     if (rel) result.relationships += 1;
   }
 
@@ -168,7 +172,8 @@ function storeExtraction(graph, extraction, source = 'llm_extraction', options =
     const commitment = graph.addCommitment(c.what, {
       whenDue: parseDate(c.when_due),
       priority: c.priority,
-      source
+      source,
+      sourceAgentId: agentId
     });
     if (commitment) result.commitments += 1;
   }
@@ -182,7 +187,7 @@ function storeExtraction(graph, extraction, source = 'llm_extraction', options =
 // ÚNICA llamada al modelo del turno, pasa aquí el objeto {entities,facts,...}
 // para depositarlo directo en el grafo sin volver a llamar al modelo. Si es
 // null, mantiene el camino standalone (llamada propia), usado por tests/fallback.
-async function extractGraphFromTurn({ userText, assistantText, modelProvider, graph, preExtracted = null }) {
+async function extractGraphFromTurn({ userText, assistantText, modelProvider, graph, preExtracted = null, agentId = null }) {
   if (!graph) {
     return { entities: 0, facts: 0, relationships: 0, commitments: 0 };
   }
@@ -195,7 +200,8 @@ async function extractGraphFromTurn({ userText, assistantText, modelProvider, gr
       } catch (_) { existingNames = []; }
       return storeExtraction(graph, preExtracted, 'llm_extraction', {
         contextText: userText,
-        existingNames
+        existingNames,
+        agentId
       });
     } catch (_) {
       return { entities: 0, facts: 0, relationships: 0, commitments: 0 };
@@ -222,7 +228,8 @@ async function extractGraphFromTurn({ userText, assistantText, modelProvider, gr
     const data = out?.data || {};
     return storeExtraction(graph, data, 'llm_extraction', {
       contextText: userText,
-      existingNames
+      existingNames,
+      agentId
     });
   } catch (_) {
     return { entities: 0, facts: 0, relationships: 0, commitments: 0 };

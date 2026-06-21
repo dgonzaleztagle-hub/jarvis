@@ -203,6 +203,10 @@ class MemoryStore {
       tags: record.tags || current?.tags || [],
       aliases: record.aliases || current?.aliases || [],
       sourceRefs: record.sourceRefs || [],
+      // Namespace de memoria por agente: ver knowledge-graph.js _visible(). Un
+      // registro escrito durante una corrida de agente no contamina el
+      // contexto global ni el de otros agentes.
+      sourceAgentId: record.sourceAgentId ?? current?.sourceAgentId ?? null,
       content: record.content || '',
       createdAt: record.createdAt || now,
       updatedAt: now,
@@ -224,6 +228,7 @@ class MemoryStore {
       sensitivity: normalized.sensitivity,
       tags: normalized.tags,
       aliases: normalized.aliases,
+      sourceAgentId: normalized.sourceAgentId,
       file: fileName,
       updatedAt: normalized.updatedAt
     };
@@ -240,8 +245,16 @@ class MemoryStore {
     return records.filter((record) => {
       if (filter.state && record.state !== filter.state) return false;
       if (filter.type && record.type !== filter.type) return false;
+      if (!this._visible(record, filter.agentId)) return false;
       return true;
     });
+  }
+
+  // Namespace de memoria por agente: ver knowledge-graph.js para la misma
+  // regla. Un registro con sourceAgentId puesto solo es visible para ESE
+  // agente; sin sourceAgentId (caso normal), visible para todos.
+  _visible(record, agentId) {
+    return !record.sourceAgentId || record.sourceAgentId === agentId;
   }
 
   get(id) {
@@ -300,6 +313,7 @@ class MemoryStore {
 
     return this.readIndex().records
       .filter((summary) => allowedStates.includes(summary.state))
+      .filter((summary) => this._visible(summary, options.agentId))
       .map((summary) => this.get(summary.id))
       .filter(Boolean)
       .filter((record) => !allowedTypes || allowedTypes.includes(record.type))

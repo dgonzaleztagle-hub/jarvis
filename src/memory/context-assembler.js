@@ -80,8 +80,8 @@ function formatRecord(record) {
   return `[${record.type}] ${title}: ${body}`;
 }
 
-function buildCapabilitiesBlock(store) {
-  const record = store.list({ type: 'assistant_self_knowledge' })
+function buildCapabilitiesBlock(store, agentId) {
+  const record = store.list({ type: 'assistant_self_knowledge', agentId })
     .filter((r) => r.state === 'verified')
     .slice(0, 1)
     .map((r) => store.get(r.id))
@@ -93,11 +93,11 @@ function buildCapabilitiesBlock(store) {
   return groups ? `[capacidades]\n${groups}` : '';
 }
 
-function buildTier0Lines(store) {
+function buildTier0Lines(store, agentId) {
   const lines = [];
 
   // Identity: high-confidence business_context + user identity
-  const identity = store.list({ type: 'business_context' })
+  const identity = store.list({ type: 'business_context', agentId })
     .filter((r) => ['verified'].includes(r.state))
     .slice(0, 2)
     .map((r) => store.get(r.id))
@@ -109,7 +109,7 @@ function buildTier0Lines(store) {
   // Global behavior rules: verified behavior_lessons. Ordenadas por confianza
   // y recencia ANTES de cortar: con el catálogo creciendo, el orden de
   // inserción dejaría fuera justamente las lecciones nuevas.
-  const rules = store.list({ type: 'behavior_lesson' })
+  const rules = store.list({ type: 'behavior_lesson', agentId })
     .filter((r) => r.state === 'verified')
     .sort((a, b) => (b.confidence || 0) - (a.confidence || 0)
       || String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))
@@ -123,12 +123,12 @@ function buildTier0Lines(store) {
   return lines;
 }
 
-function buildTier1Lines(store) {
+function buildTier1Lines(store, agentId) {
   const lines = [];
   const cutoff = Date.now() - 14 * 24 * 60 * 60 * 1000; // 14 days
 
   // Preferences
-  const prefs = store.list({ type: 'preference' })
+  const prefs = store.list({ type: 'preference', agentId })
     .filter((r) => r.state === 'verified')
     .slice(0, 5)
     .map((r) => store.get(r.id))
@@ -138,7 +138,7 @@ function buildTier1Lines(store) {
   lines.push(...prefs);
 
   // Recent behavior lessons (any non-rejected state)
-  const recentLessons = store.list({ type: 'behavior_lesson' })
+  const recentLessons = store.list({ type: 'behavior_lesson', agentId })
     .filter((r) => !['rejected', 'obsolete'].includes(r.state))
     .filter((r) => r.state !== 'verified') // verified already in tier0
     .filter((r) => r.updatedAt && new Date(r.updatedAt).getTime() > cutoff)
@@ -153,7 +153,7 @@ function buildTier1Lines(store) {
   return lines;
 }
 
-function buildTier2Lines(store, domains, query) {
+function buildTier2Lines(store, domains, query, agentId) {
   if (domains.size === 0 && !query) return [];
 
   // Build a domain-enriched query
@@ -163,7 +163,8 @@ function buildTier2Lines(store, domains, query) {
   const records = store.search(searchQuery, {
     limit: 8,
     types: ['knowledge', 'business_context', 'contact', 'relationship', 'task_pattern'],
-    states: ['verified', 'candidate', 'low_confidence']
+    states: ['verified', 'candidate', 'low_confidence'],
+    agentId
   });
 
   return records
@@ -183,7 +184,7 @@ class ContextAssembler {
     this.formatBrandProfile = typeof formatBrandProfile === 'function' ? formatBrandProfile : null;
   }
 
-  assemble({ userText = '', recentHistory = '' } = {}) {
+  assemble({ userText = '', recentHistory = '', agentId = null } = {}) {
     if (!this.store) return '';
 
     const fullQuery = `${userText} ${recentHistory}`.slice(0, 400).trim();
@@ -195,7 +196,7 @@ class ContextAssembler {
     let budget = CHAR_BUDGET.total - dateHeader.length;
 
     // Capacidades propias: sección dedicada, no compite con tier0
-    const capBlock = buildCapabilitiesBlock(this.store);
+    const capBlock = buildCapabilitiesBlock(this.store, agentId);
     if (capBlock) {
       const allowed = capBlock.slice(0, CHAR_BUDGET.capabilities);
       sections.push(allowed);
@@ -222,7 +223,7 @@ class ContextAssembler {
     }
 
     // Tier 0
-    const tier0Lines = buildTier0Lines(this.store);
+    const tier0Lines = buildTier0Lines(this.store, agentId);
     if (tier0Lines.length > 0) {
       const block = tier0Lines.join('\n');
       const allowed = block.slice(0, CHAR_BUDGET.tier0);
@@ -232,7 +233,7 @@ class ContextAssembler {
 
     // Tier 1
     if (budget > 400) {
-      const tier1Lines = buildTier1Lines(this.store);
+      const tier1Lines = buildTier1Lines(this.store, agentId);
       if (tier1Lines.length > 0) {
         const block = tier1Lines.join('\n');
         const allowed = block.slice(0, Math.min(CHAR_BUDGET.tier1, budget - 200));
@@ -245,7 +246,7 @@ class ContextAssembler {
 
     // Tier 2
     if (budget > 600 && (domains.size > 0 || fullQuery)) {
-      const tier2Lines = buildTier2Lines(this.store, domains, userText.slice(0, 200));
+      const tier2Lines = buildTier2Lines(this.store, domains, userText.slice(0, 200), agentId);
       if (tier2Lines.length > 0) {
         const block = tier2Lines.join('\n');
         const allowed = block.slice(0, Math.min(CHAR_BUDGET.tier2, budget - 200));
@@ -261,9 +262,9 @@ class ContextAssembler {
     if (this.graph && budget > 400) {
       const graphLines = [];
       try {
-        const knowledge = this.graph.getKnowledgeForMessage(userText, { limit: 4 });
+        const knowledge = this.graph.getKnowledgeForMessage(userText, { limit: 4, agentId });
         if (knowledge) graphLines.push(knowledge);
-        const commitments = this.graph.getOpenCommitmentsSummary({ limit: 4 });
+        const commitments = this.graph.getOpenCommitmentsSummary({ limit: 4, agentId });
         if (commitments) graphLines.push(`Compromisos abiertos:\n${commitments}`);
       } catch (err) {
         // No rompe el ensamblado, pero un grafo que se cae siempre en silencio es

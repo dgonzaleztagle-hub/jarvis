@@ -101,7 +101,7 @@ async function extractBoth({ userText, assistantText, modelProvider, memoryStore
 // Las dos persistencias se aíslan entre sí (un fallo no mata al otro), igual que
 // cuando eran dos pasos separados. Nunca propaga: el aprendizaje en background
 // jamás debe romper el camino en vivo.
-async function extractTurnKnowledge({ userText, assistantResult, toolResults, modelProvider, memoryStore, knowledgeGraph, recentHistory = '' }) {
+async function extractTurnKnowledge({ userText, assistantResult, toolResults, modelProvider, memoryStore, knowledgeGraph, recentHistory = '', agentId = null }) {
   const assistantText = assistantResult?.speak || assistantResult?.visual || '';
 
   let extracted = null;
@@ -129,7 +129,8 @@ async function extractTurnKnowledge({ userText, assistantResult, toolResults, mo
       memoryStore,
       modelProvider,
       recentHistory,
-      preExtractedItems: extracted ? extracted.memoryItems : null
+      preExtractedItems: extracted ? extracted.memoryItems : null,
+      agentId
     });
   } catch (err) {
     console.warn(`[jarvis-codex] aprendizaje de memoria falló: ${err.message}`);
@@ -145,7 +146,8 @@ async function extractTurnKnowledge({ userText, assistantResult, toolResults, mo
         assistantText,
         modelProvider,
         graph: knowledgeGraph,
-        preExtracted: extracted ? extracted.graphData : null
+        preExtracted: extracted ? extracted.graphData : null,
+        agentId
       });
     } catch (err) {
       console.warn(`[jarvis-codex] extracción al grafo falló: ${err.message}`);
