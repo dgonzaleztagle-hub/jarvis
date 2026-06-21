@@ -46,7 +46,7 @@ function createLinkedInDriver({ credentialVault, dataDir }) {
 
     isConnected() {
       if (!loadConfig()) return false;
-      try { credentialVault.get('LINKEDIN_ACCESS_TOKEN'); return true; } catch (_) { return false; }
+      return Boolean(credentialVault.get('LINKEDIN_ACCESS_TOKEN'));
     },
 
     onboardingInstructions() {

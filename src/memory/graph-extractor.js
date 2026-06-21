@@ -49,6 +49,12 @@ function normalize(text = '') {
   return String(text).toLowerCase().normalize('NFD').replace(/\p{M}/gu, '').trim();
 }
 
+function normalizedIncludes(haystack = '', needle = '') {
+  const n = normalize(needle);
+  if (!n) return false;
+  return normalize(haystack).includes(n);
+}
+
 // Predicados que describen ESTADO OPERACIONAL EFÍMERO (no hechos duraderos del
 // mundo del usuario): resultados de corridas, estados de conexión, errores
 // transitorios, conteos del momento. El grafo modela el mundo del usuario, no
@@ -76,10 +82,53 @@ function parseDate(value) {
   return Number.isNaN(t) ? null : new Date(t).toISOString();
 }
 
+function filterExtractionByGrounding(extraction, { contextText = '', existingNames = [] } = {}) {
+  if (!contextText && existingNames.length === 0) return extraction || {};
+
+  const known = new Set(existingNames.map((name) => normalize(name)).filter(Boolean));
+  const allowedName = (name) => {
+    const normalized = normalize(name);
+    if (!normalized) return false;
+    return known.has(normalized) || normalizedIncludes(contextText, name);
+  };
+
+  const entitiesIn = safeArray(extraction.entities);
+  const entities = entitiesIn.filter((entity) => entity?.name && allowedName(entity.name));
+  const allowed = new Set([
+    ...known,
+    ...entities.map((entity) => normalize(entity.name)).filter(Boolean)
+  ]);
+  const hasAllowedSubject = (name) => allowed.has(normalize(name)) || allowedName(name);
+
+  const factsIn = safeArray(extraction.facts);
+  const relationshipsIn = safeArray(extraction.relationships);
+  const facts = factsIn.filter((fact) => fact?.subject && hasAllowedSubject(fact.subject));
+  const relationships = relationshipsIn.filter((rel) => (
+    rel?.from && rel?.to && hasAllowedSubject(rel.from) && hasAllowedSubject(rel.to)
+  ));
+
+  const droppedEntities = entitiesIn.length - entities.length;
+  const droppedFacts = factsIn.length - facts.length;
+  const droppedRelationships = relationshipsIn.length - relationships.length;
+  if (droppedEntities || droppedFacts || droppedRelationships) {
+    const droppedNames = entitiesIn.filter((e) => !entities.includes(e)).map((e) => e?.name).filter(Boolean);
+    console.warn(`[jarvis-codex] grounding del grafo descartó entidades/hechos no presentes en el texto del usuario: entidades=${droppedEntities}${droppedNames.length ? ` (${droppedNames.join(', ')})` : ''}, hechos=${droppedFacts}, relaciones=${droppedRelationships}`);
+  }
+
+  return {
+    ...extraction,
+    entities,
+    facts,
+    relationships,
+    commitments: safeArray(extraction.commitments)
+  };
+}
+
 // Procesa el resultado del modelo y lo deposita en el grafo. Separado del
 // llamado al LLM para poder testear el almacenamiento sin red.
-function storeExtraction(graph, extraction, source = 'llm_extraction') {
+function storeExtraction(graph, extraction, source = 'llm_extraction', options = {}) {
   const result = { entities: 0, facts: 0, relationships: 0, commitments: 0 };
+  extraction = filterExtractionByGrounding(extraction || {}, options);
   const nameToId = new Map();
 
   for (const e of safeArray(extraction.entities)) {
@@ -140,7 +189,14 @@ async function extractGraphFromTurn({ userText, assistantText, modelProvider, gr
   // Camino unificado: el modelo ya corrió; solo persistimos. Nunca lanza.
   if (preExtracted && typeof preExtracted === 'object') {
     try {
-      return storeExtraction(graph, preExtracted, 'llm_extraction');
+      let existingNames = [];
+      try {
+        existingNames = (graph.read().entities || []).map((e) => e.name).filter(Boolean);
+      } catch (_) { existingNames = []; }
+      return storeExtraction(graph, preExtracted, 'llm_extraction', {
+        contextText: userText,
+        existingNames
+      });
     } catch (_) {
       return { entities: 0, facts: 0, relationships: 0, commitments: 0 };
     }
@@ -164,7 +220,10 @@ async function extractGraphFromTurn({ userText, assistantText, modelProvider, gr
       purpose: 'graph_extraction'
     });
     const data = out?.data || {};
-    return storeExtraction(graph, data, 'llm_extraction');
+    return storeExtraction(graph, data, 'llm_extraction', {
+      contextText: userText,
+      existingNames
+    });
   } catch (_) {
     return { entities: 0, facts: 0, relationships: 0, commitments: 0 };
   }

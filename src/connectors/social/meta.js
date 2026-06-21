@@ -120,7 +120,7 @@ function createMetaDriver({ credentialVault, dataDir }) {
     isConnected() {
       const cfg = loadConfig();
       if (!cfg?.pageId) return false;
-      try { credentialVault.get('META_PAGE_ACCESS_TOKEN'); return true; } catch (_) { return false; }
+      return Boolean(credentialVault.get('META_PAGE_ACCESS_TOKEN'));
     },
 
     onboardingInstructions() {
@@ -195,6 +195,7 @@ function createMetaDriver({ credentialVault, dataDir }) {
       const cfg = loadConfig();
       if (!cfg) throw new Error('Meta no configurado. Usa social.connect { platform: "meta" }.');
       const token = await getToken();
+      if (!token) throw new Error('Meta no configurado. Usa social.connect { platform: "meta" }.');
       const platforms = Array.isArray(input.platforms)
         ? input.platforms.filter((p) => ['fb', 'ig'].includes(p))
         : ['fb', 'ig'];

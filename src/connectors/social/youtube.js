@@ -26,9 +26,11 @@ function createYouTubeDriver({ credentialVault, dataDir, googleAuthFactory }) {
     capabilities: CAPABILITIES,
 
     isConnected() {
-      // YouTube usa el Google OAuth ya configurado — si hay auth de Google, YouTube está disponible
+      // YouTube usa Google OAuth, pero "conectado" significa que el usuario ya
+      // validó el canal con social.connect y quedó config local para publicar.
       if (!googleAuthFactory) return false;
-      try { googleAuthFactory.getClient(); return loadConfig() !== null || true; } catch (_) { return false; }
+      if (!loadConfig()) return false;
+      try { googleAuthFactory.getClient(); return true; } catch (_) { return false; }
     },
 
     onboardingInstructions() {

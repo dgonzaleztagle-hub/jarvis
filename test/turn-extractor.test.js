@@ -102,3 +102,47 @@ test('extractTurnKnowledge: si la llamada unificada falla, degrada a dos llamada
   assert.ok(calls >= 2, 'el fallback debe reintentar por el camino de dos llamadas');
   assert.deepEqual(res.graphResult, { entities: 0, facts: 0, relationships: 0, commitments: 0 });
 });
+
+test('extractTurnKnowledge: extracción no grounded no entra como verdad ni como entidad nueva del grafo', async () => {
+  const dir = tempDataDir();
+  const memoryStore = new MemoryStore({ dataDir: dir });
+  const knowledgeGraph = new KnowledgeGraph({ dataDir: dir });
+
+  const provider = countingProvider({
+    memory: {
+      items: [{
+        key: 'cliente_fantasma',
+        title: 'Cliente Fantasma',
+        type: 'business_context',
+        state: 'verified',
+        confidence: 0.98,
+        content: { cliente: 'Cliente Fantasma', rubro: 'retail' },
+        evidence: 'El asistente mencionó Cliente Fantasma'
+      }]
+    },
+    graph: {
+      entities: [{ name: 'Cliente Fantasma', type: 'org' }],
+      facts: [{ subject: 'Cliente Fantasma', predicate: 'rubro', object: 'retail', confidence: 0.99 }],
+      relationships: [],
+      commitments: []
+    }
+  });
+
+  const res = await extractTurnKnowledge({
+    userText: 'la pagina quedó rara, corrige el layout y no inventes clientes',
+    assistantResult: { speak: 'Revisaré Cliente Fantasma.', visual: '' },
+    toolResults: [],
+    modelProvider: provider,
+    memoryStore,
+    knowledgeGraph,
+    recentHistory: ''
+  });
+
+  const stored = memoryStore.getByKey('cliente_fantasma');
+  assert.ok(stored, 'la memoria puede quedar como candidato revisable');
+  assert.equal(stored.state, 'candidate');
+  assert.ok(stored.confidence <= 0.6);
+
+  assert.equal(res.graphResult.entities, 0);
+  assert.equal(knowledgeGraph.findEntities({ name: 'Cliente Fantasma' }).length, 0);
+});

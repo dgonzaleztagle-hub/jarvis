@@ -27,6 +27,20 @@ const INBOX_DIR = path.join('video', 'inbox');
 const RENDERS_DIR = path.join('video', 'renders');
 const FOOTAGE_DIR = path.join('video', 'footage');
 
+function parseFrameRate(value) {
+  const text = String(value || '').trim();
+  if (!text) return null;
+  const fraction = text.match(/^(\d+(?:\.\d+)?)\/(\d+(?:\.\d+)?)$/);
+  if (fraction) {
+    const numerator = Number(fraction[1]);
+    const denominator = Number(fraction[2]);
+    if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator === 0) return null;
+    return numerator / denominator;
+  }
+  const numeric = Number(text);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
 const TEMPLATE_SCHEMAS = {
   KineticText: {
     description: 'Palabras que entran escalonadas con spring physics. Ideal para anuncios y mensajes de impacto.',
@@ -285,8 +299,8 @@ function createVideoTools({ dataDir, credentialVault }) {
     {
       name: 'video.info',
       description: 'Metadata de un video o audio: duración, resolución, codec, tamaño. Requiere ffprobe.',
-      input_schema: { type: 'object', properties: { filePath: { type: 'string' } }, required: ['filePath'] },
-      riskLevel: 'low',
+      inputSchema: { type: 'object', properties: { filePath: { type: 'string' } }, required: ['filePath'] },
+      risk: 'low',
       async execute(input) {
         const filePath = path.isAbsolute(input.filePath) ? input.filePath : path.join(inboxDir, input.filePath);
         if (!fs.existsSync(filePath)) return { ok: false, error: `No encontrado: ${filePath}` };
@@ -300,7 +314,7 @@ function createVideoTools({ dataDir, credentialVault }) {
             durationSecs: Math.round(Number(fmt.duration) || 0),
             sizeMb: ((Number(fmt.size) || 0) / 1e6).toFixed(1),
             format: fmt.format_name,
-            video: video ? { codec: video.codec_name, width: video.width, height: video.height, fps: eval(video.r_frame_rate) || null } : null,
+            video: video ? { codec: video.codec_name, width: video.width, height: video.height, fps: parseFrameRate(video.r_frame_rate) } : null,
             audio: audio ? { codec: audio.codec_name, sampleRate: audio.sample_rate } : null
           };
         } catch (err) {
@@ -314,8 +328,8 @@ function createVideoTools({ dataDir, credentialVault }) {
     {
       name: 'video.cut_silences',
       description: 'Cortar silencios de un video con ffmpeg. Input: { filePath, minSilenceDuration? (default 0.7s), threshold? (default -40dB), outputName? }',
-      input_schema: { type: 'object', properties: { filePath: { type: 'string' }, minSilenceDuration: { type: 'number' }, threshold: { type: 'number' }, outputName: { type: 'string' } }, required: ['filePath'] },
-      riskLevel: 'medium',
+      inputSchema: { type: 'object', properties: { filePath: { type: 'string' }, minSilenceDuration: { type: 'number' }, threshold: { type: 'number' }, outputName: { type: 'string' } }, required: ['filePath'] },
+      risk: 'medium',
       async execute(input) {
         const filePath = path.isAbsolute(input.filePath) ? input.filePath : path.join(inboxDir, input.filePath);
         if (!fs.existsSync(filePath)) return { ok: false, error: `No encontrado: ${filePath}` };
@@ -365,8 +379,8 @@ function createVideoTools({ dataDir, credentialVault }) {
     {
       name: 'video.transcribe',
       description: 'Transcribir video o audio con Gemini STT. Devuelve texto + segmentos + archivo .srt. Input: { filePath, language? }',
-      input_schema: { type: 'object', properties: { filePath: { type: 'string' }, language: { type: 'string' } }, required: ['filePath'] },
-      riskLevel: 'low',
+      inputSchema: { type: 'object', properties: { filePath: { type: 'string' }, language: { type: 'string' } }, required: ['filePath'] },
+      risk: 'low',
       async execute(input) {
         const filePath = path.isAbsolute(input.filePath) ? input.filePath : path.join(inboxDir, input.filePath);
         if (!fs.existsSync(filePath)) return { ok: false, error: `No encontrado: ${filePath}` };
@@ -399,8 +413,8 @@ function createVideoTools({ dataDir, credentialVault }) {
     {
       name: 'video.add_captions',
       description: 'Quemar subtítulos .srt en un video con ffmpeg. Input: { videoPath, srtPath, outputName?, style? }',
-      input_schema: { type: 'object', properties: { videoPath: { type: 'string' }, srtPath: { type: 'string' }, outputName: { type: 'string' }, style: { type: 'string', enum: ['default', 'bold', 'minimal'] } }, required: ['videoPath', 'srtPath'] },
-      riskLevel: 'medium',
+      inputSchema: { type: 'object', properties: { videoPath: { type: 'string' }, srtPath: { type: 'string' }, outputName: { type: 'string' }, style: { type: 'string', enum: ['default', 'bold', 'minimal'] } }, required: ['videoPath', 'srtPath'] },
+      risk: 'medium',
       async execute(input) {
         const videoPath = path.isAbsolute(input.videoPath) ? input.videoPath : path.join(inboxDir, input.videoPath);
         const srtPath   = path.isAbsolute(input.srtPath)   ? input.srtPath   : path.join(rendersDir, input.srtPath);
@@ -426,8 +440,8 @@ function createVideoTools({ dataDir, credentialVault }) {
     {
       name: 'video.fetch_footage',
       description: 'Buscar y descargar clips de stock de Pexels. Requiere PEXELS_API_KEY en vault. Input: { query, count? (default 3), orientation? ("portrait"|"landscape", default "portrait"), minDuration? (segundos) }',
-      input_schema: { type: 'object', properties: { query: { type: 'string' }, count: { type: 'number' }, orientation: { type: 'string', enum: ['portrait', 'landscape', 'square'] }, minDuration: { type: 'number' } }, required: ['query'] },
-      riskLevel: 'low',
+      inputSchema: { type: 'object', properties: { query: { type: 'string' }, count: { type: 'number' }, orientation: { type: 'string', enum: ['portrait', 'landscape', 'square'] }, minDuration: { type: 'number' } }, required: ['query'] },
+      risk: 'low',
       async execute(input) {
         const apiKey = credentialVault?.get('PEXELS_API_KEY');
         if (!apiKey) return {
@@ -469,8 +483,8 @@ function createVideoTools({ dataDir, credentialVault }) {
     {
       name: 'video.add_voiceover',
       description: 'Mezclar voiceover (MP3/WAV) con un video usando ffmpeg. Input: { videoPath, audioPath, outputName?, voiceVolume? (default 1.0), bgMusicPath?, bgVolume? (default 0.15) }',
-      input_schema: { type: 'object', properties: { videoPath: { type: 'string' }, audioPath: { type: 'string' }, outputName: { type: 'string' }, voiceVolume: { type: 'number' }, bgMusicPath: { type: 'string' }, bgVolume: { type: 'number' } }, required: ['videoPath', 'audioPath'] },
-      riskLevel: 'medium',
+      inputSchema: { type: 'object', properties: { videoPath: { type: 'string' }, audioPath: { type: 'string' }, outputName: { type: 'string' }, voiceVolume: { type: 'number' }, bgMusicPath: { type: 'string' }, bgVolume: { type: 'number' } }, required: ['videoPath', 'audioPath'] },
+      risk: 'medium',
       async execute(input) {
         const videoPath = path.isAbsolute(input.videoPath) ? input.videoPath : path.join(inboxDir, input.videoPath);
         const audioPath = path.isAbsolute(input.audioPath) ? input.audioPath : path.join(inboxDir, input.audioPath);
@@ -503,8 +517,8 @@ function createVideoTools({ dataDir, credentialVault }) {
     {
       name: 'video.setup_renderer',
       description: 'Instalar el renderer Remotion en data/video/renderer/. Solo una vez. Tarda ~2 min. Requiere Node.js e internet.',
-      input_schema: { type: 'object', properties: {} },
-      riskLevel: 'medium',
+      inputSchema: { type: 'object', properties: {} },
+      risk: 'medium',
       async execute() {
         if (isRendererReady()) return { ok: true, rendererDir, note: 'Renderer ya instalado.', templates: Object.keys(TEMPLATE_SCHEMAS) };
         fs.mkdirSync(rendererDir, { recursive: true });
@@ -546,8 +560,8 @@ function createVideoTools({ dataDir, credentialVault }) {
     {
       name: 'video.list_templates',
       description: 'Listar los 16 templates de video disponibles con descripción y props.',
-      input_schema: { type: 'object', properties: {} },
-      riskLevel: 'low',
+      inputSchema: { type: 'object', properties: {} },
+      risk: 'low',
       async execute() {
         const notReady = requireRenderer();
         if (notReady) return notReady;
@@ -559,8 +573,8 @@ function createVideoTools({ dataDir, credentialVault }) {
     {
       name: 'video.render',
       description: 'Generar un video MP4 con un template Remotion. Input: { template, props, outputName?, width? (default 1080), height? (default 1920), fps? (default 30) }',
-      input_schema: { type: 'object', properties: { template: { type: 'string' }, props: { type: 'object' }, outputName: { type: 'string' }, width: { type: 'number' }, height: { type: 'number' }, fps: { type: 'number' } }, required: ['template', 'props'] },
-      riskLevel: 'medium',
+      inputSchema: { type: 'object', properties: { template: { type: 'string' }, props: { type: 'object' }, outputName: { type: 'string' }, width: { type: 'number' }, height: { type: 'number' }, fps: { type: 'number' } }, required: ['template', 'props'] },
+      risk: 'medium',
       async execute(input) {
         const notReady = requireRenderer();
         if (notReady) return notReady;
@@ -596,8 +610,8 @@ function createVideoTools({ dataDir, credentialVault }) {
     {
       name: 'video.render_still',
       description: 'Generar una imagen estática (PNG/JPEG/WEBP) desde un template Remotion. Útil para thumbnails, OG images, portadas de post. Input: { template, props, frame? (default 30), format? (default "png"), outputName? }',
-      input_schema: { type: 'object', properties: { template: { type: 'string' }, props: { type: 'object' }, frame: { type: 'number' }, format: { type: 'string', enum: ['png', 'jpeg', 'webp'] }, outputName: { type: 'string' } }, required: ['template', 'props'] },
-      riskLevel: 'low',
+      inputSchema: { type: 'object', properties: { template: { type: 'string' }, props: { type: 'object' }, frame: { type: 'number' }, format: { type: 'string', enum: ['png', 'jpeg', 'webp'] }, outputName: { type: 'string' } }, required: ['template', 'props'] },
+      risk: 'low',
       async execute(input) {
         const notReady = requireRenderer();
         if (notReady) return notReady;
@@ -631,7 +645,7 @@ function createVideoTools({ dataDir, credentialVault }) {
     {
       name: 'video.compose',
       description: 'Pipeline completo de video: busca footage en Pexels por escena, renderiza con MarketingReel, mezcla voiceover opcional. Input: { scenes: [{query, text, durationSecs}], brand, accentColor?, voiceoverPath?, bgMusicPath?, outputName? }',
-      input_schema: {
+      inputSchema: {
         type: 'object',
         properties: {
           scenes: { type: 'array', description: 'Lista de escenas. Cada una con query para Pexels, texto para overlay y duración.', items: { type: 'object', properties: { query: { type: 'string' }, text: { type: 'string' }, durationSecs: { type: 'number' } } } },
@@ -643,7 +657,7 @@ function createVideoTools({ dataDir, credentialVault }) {
         },
         required: ['scenes', 'brand']
       },
-      riskLevel: 'high',
+      risk: 'high',
       async execute(input) {
         const notReady = requireRenderer();
         if (notReady) return notReady;
@@ -1395,4 +1409,4 @@ export function MarketingReel({ scenes = [], brandName = '', accentColor = '#7F7
 `);
 }
 
-module.exports = { createVideoTools };
+module.exports = { createVideoTools, parseFrameRate };

@@ -21,6 +21,16 @@ const MEMORY_TYPE_ORDER = [
   'business_context','assistant_self_knowledge','knowledge','feedback','user','project','reference'
 ];
 
+function escapeHtml(value = '') {
+  return String(value).replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  })[char]);
+}
+
 /* ─── REGISTRY ──────────────────────────────────────────────────────────────── */
 export const ARTIFACT_DEFS = {
   agenda:   { title:'AGENDA',   icon:'📅', dock:'dockAgenda',  load:loadAgendaData,   render:renderAgenda   },
@@ -613,7 +623,7 @@ export function appendChunkToPanel(chunk, transcriptEl) {
   p.style.cssText = 'margin:0 0 6px;padding:4px 6px;border-left:2px solid var(--c-border,#2a3348);';
 
   // Highlight markers
-  const text = chunk.text
+  const text = escapeHtml(chunk.text)
     .replace(/\[DECISIÓN: ([^\]]+)\]/g, '<mark style="background:#1e3a1e;color:#6fcf6f;padding:0 3px;">⚡ $1</mark>')
     .replace(/\[COMPROMISO de ([^\]]+): ([^\]]+)\]/g, '<mark style="background:#1e1e3a;color:#9ab4f8;padding:0 3px;">🤝 $1: $2</mark>')
     .replace(/\[CIFRA: ([^\]]+)\]/g, '<mark style="background:#2a1e1e;color:#f4a0a0;padding:0 3px;">📊 $1</mark>');
