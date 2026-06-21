@@ -47,11 +47,11 @@ const { createAgentTools } = require('./agents/agent-tools');
 const { executeTask } = require('./agents/task-executor');
 const { createVisionTools } = require('./vision/vision-tools');
 const { createMeetingTools } = require('./meeting/meeting-tools');
-const { createSocialHubTools } = require('./connectors/social-hub');
 const { createVideoTools } = require('./connectors/video-pipeline');
 const { createSheetsMemoryTools } = require('./connectors/sheets-memory');
 const { createBrandProfileTools } = require('./connectors/brand-profile');
 const { createDesignModule } = require('./modules/design');
+const { createMarketingModule } = require('./modules/marketing');
 
 function createRuntime(options = {}) {
   const dataDir = options.dataDir || DATA_DIR;
@@ -448,6 +448,8 @@ function createRuntime(options = {}) {
     modelProvider, dataDir, eventBus, brandTools,
     generateWithContinuation, contentHonestyClause: CONTENT_HONESTY_CLAUSE
   });
+  // Módulo MARKETING (especialista "Mara"): dueño del grupo social.*.
+  const marketingModule = createMarketingModule({ credentialVault, dataDir, googleAuthFactory });
 
   const contextAssembler = new ContextAssembler({
     memoryStore,
@@ -476,7 +478,7 @@ function createRuntime(options = {}) {
     getActiveModel,
     persona,
     historyStore,
-    modules: [designModule]
+    modules: [designModule, marketingModule]
   });
   toolRegistry.register({
     name: 'conversation.recall',
@@ -641,7 +643,8 @@ function createRuntime(options = {}) {
     toolRegistry.register(tool);
   }
 
-  for (const tool of createSocialHubTools({ credentialVault, dataDir, googleAuthFactory })) {
+  // Tools de marketing (social.*): las provee el módulo Marketing (Mara).
+  for (const tool of marketingModule.tools) {
     toolRegistry.register(tool);
   }
 

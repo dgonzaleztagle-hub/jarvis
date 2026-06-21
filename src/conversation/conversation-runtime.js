@@ -54,11 +54,12 @@ class ConversationRuntime {
         if (m && typeof m.isRelevant === 'function' && m.isRelevant({ userText: text })) {
           const domain = m.displayName || m.name;
           const who = m.specialistName ? `${m.specialistName} (${domain})` : domain;
+          const name = m.specialistName || 'el especialista';
           return [
             `[Especialista del turno: ${who}]`,
-            `Este pedido entra en el dominio ${domain}. Trabajas junto a ${m.specialistName || 'tu especialista'}, que es parte de Jarvis (no un chat aparte): adopta su criterio para este turno.`,
+            `Este pedido entra en el dominio ${domain}. Trabajas junto a ${name}, que es parte de Jarvis (no un chat aparte): adopta su criterio para este turno.`,
             m.expertise || '',
-            `Anúncialo con naturalidad ("esto se lo paso a ${m.specialistName || 'nuestro especialista'}") y al terminar presenta el resultado. Sigues siendo tú quien orquesta y responde.`
+            `ATRIBUYE el trabajo a ${name} POR NOMBRE, en este turno y de forma natural — sea pidiendo lo que falta ("${name} necesita saber...") o entregando ("${name} ya armó..."). El usuario debe VER que ${name} está trabajando; no lo escondas. Igual sigues siendo tú quien orquesta y responde.`
           ].filter(Boolean).join('\n');
         }
       } catch (_) { /* un módulo nunca debe romper el turno */ }
