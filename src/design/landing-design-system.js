@@ -162,16 +162,26 @@ function pickWhere(arr, names) {
   return pick(pool.length ? pool : arr);
 }
 
-// Tira los dados sesgando por nicho (pero sin clavar siempre lo mismo): da una
-// dirección sugerida que el modelo puede ajustar si choca con el rubro.
-function rollSeeds(niche) {
+function comboSig(s) {
+  return `${s.layout.name}|${s.typography.name}|${s.motion.name}|${s.color.name}`;
+}
+
+// Tira los dados sesgando por nicho. `avoid` = firmas de combos recientes del
+// mismo cliente: re-tira hasta no repetir (pool chico → tras N intentos acepta).
+function rollSeeds(niche, avoid = []) {
   const hint = niche === 'SERIOUS' ? SERIOUS_HINT : CREATIVE_HINT;
-  return {
-    layout: pickWhere(LAYOUTS, hint.layouts),
-    typography: pickWhere(TYPOGRAPHY, hint.typo),
-    motion: pickWhere(MOTION, hint.motion),
-    color: pickWhere(COLOR, hint.color)
-  };
+  let last = null;
+  for (let i = 0; i < 8; i += 1) {
+    const s = {
+      layout: pickWhere(LAYOUTS, hint.layouts),
+      typography: pickWhere(TYPOGRAPHY, hint.typo),
+      motion: pickWhere(MOTION, hint.motion),
+      color: pickWhere(COLOR, hint.color)
+    };
+    if (!avoid.includes(comboSig(s))) return s;
+    last = s;
+  }
+  return last;
 }
 
 // Heurística rápida de nicho desde el brief (el modelo igual reclasifica si hace
@@ -184,12 +194,15 @@ function guessNiche(brief = '') {
 
 // Construye la directiva de diseño que se antepone al prompt de generación.
 // brandColors opcional: { primary, secondary, ... } para forzar paleta de marca.
-function buildDesignDirective({ brief = '', brandColors = null } = {}) {
+// Planifica la landing: elige concepto + dirección de arte (evitando combos
+// recientes del cliente) y arma la directiva. Devuelve también el combo elegido
+// para que el caller lo persista en la memoria de variaciones.
+function planLanding({ brief = '', brandColors = null, avoid = [] } = {}) {
   // Capa de contenido: concepto por nicho (HojaCero). Si calza, además define si
   // el motor visual va por la rama SERIOUS o CREATIVE.
   const concept = matchConcept(brief);
   const niche = concept ? (SERIOUS_NICHES.has(concept.niche) ? 'SERIOUS' : 'CREATIVE') : guessNiche(brief);
-  const seeds = rollSeeds(niche);
+  const seeds = rollSeeds(niche, avoid);
 
   const conceptBlock = concept ? `
 
@@ -200,7 +213,7 @@ ${concept.content}` : '';
     ? `PALETA (MARCA ACTIVA — manda sobre cualquier estrategia de color): usa EXACTAMENTE estos hex como paleta dominante, con clases Tailwind de valor arbitrario (bg-[${brandColors.primary}], text-[${brandColors.primary}], border-[${brandColors.primary}]) o CSS vars — no los "interpretes" ni los suavices. Primario ${brandColors.primary || ''} (acentos, CTA, énfasis)${brandColors.secondary ? `, secundario ${brandColors.secondary}` : ''}${brandColors.accent ? `, acento ${brandColors.accent}` : ''}. Construye fondos y neutros en armonía con ellos.`
     : `PALETA: estrategia "${seeds.color.name}" — ${seeds.color.desc}. Define 2-3 hex coherentes con el rubro y úsalos consistentes.`;
 
-  return `Actúa como DIRECTOR CREATIVO antes de escribir una línea. Esto NO es una landing genérica: el objetivo es "WOW por defecto" — que parezca pieza de Awwwards, no plantilla. Elimina todo "olor a plantilla".
+  const directive = `Actúa como DIRECTOR CREATIVO antes de escribir una línea. Esto NO es una landing genérica: el objetivo es "WOW por defecto" — que parezca pieza de Awwwards, no plantilla. Elimina todo "olor a plantilla".
 
 NICHO: ${niche === 'SERIOUS' ? 'SERIOUS / INSTITUCIONAL → High Fidelity Wow: física sutil, micro-interacciones, tipografía perfecta, CERO grano/distorsión/caos.' : 'CREATIVE / LIFESTYLE → High Impact Wow: tipografía display grande, composición con carácter, se permiten texturas/grano sutil y degradados.'}
 
@@ -228,9 +241,17 @@ FÍSICA DE DISEÑO (reglas duras anti-feo):
 ${conceptBlock}
 
 No expliques nada de esto en la salida; tradúcelo en el HTML.`;
+
+  return { directive, combo: comboSig(seeds), conceptName: concept ? concept.name : null, niche, seeds };
+}
+
+// Wrapper de compatibilidad: solo la directiva (string).
+function buildDesignDirective(opts = {}) {
+  return planLanding(opts).directive;
 }
 
 module.exports = {
+  planLanding,
   buildDesignDirective,
   matchConcept,
   rollSeeds,

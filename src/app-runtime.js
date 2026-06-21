@@ -645,17 +645,26 @@ function createRuntime(options = {}) {
       }
 
       if (!html.trim() && brief) {
-        const { buildDesignDirective } = require('./design/landing-design-system');
-        // Si hay una marca activa con colores, la landing los usa como base.
+        const { planLanding } = require('./design/landing-design-system');
+        const { recentCombos, recordCombo } = require('./design/variation-store');
+        // Marca activa → colores exactos + clave de cliente para la memoria de variaciones.
         let brandColors = null;
+        let clientKey = '';
         try {
           const bp = brandTools.getActiveProfile && brandTools.getActiveProfile();
-          if (bp && Array.isArray(bp.colors) && bp.colors.length) {
-            brandColors = { primary: bp.colors[0], secondary: bp.colors[1] || null, accent: bp.colors[2] || null };
+          if (bp) {
+            clientKey = bp.name || '';
+            if (Array.isArray(bp.colors) && bp.colors.length) {
+              brandColors = { primary: bp.colors[0], secondary: bp.colors[1] || null, accent: bp.colors[2] || null };
+            }
           }
         } catch (_) { /* sin marca activa: paleta del rubro */ }
-        const designDirective = buildDesignDirective({ brief, brandColors });
-        const genPrompt = `${designDirective}
+        if (!clientKey) clientKey = brief.slice(0, 60);
+        // Evita repetir el combo de las últimas landings de ESTE cliente (diverso en el tiempo, no solo aleatorio).
+        const avoid = recentCombos(dataDir, clientKey, 3);
+        const plan = planLanding({ brief, brandColors, avoid });
+        recordCombo(dataDir, clientKey, plan.combo);
+        const genPrompt = `${plan.directive}
 
 ---
 
@@ -679,6 +688,25 @@ TÉCNICA: usa Tailwind (clases de utilidad) para el layout y el grueso del estil
       }
 
       if (!html.trim()) return { ok: false, error: 'BRIEF_OR_HTML_REQUIRED' };
+
+      // Gate de QA estático (sin browser): atrapa fallas objetivas de estructura,
+      // accesibilidad y física de diseño. Si hay CRÍTICAS y la generamos de un
+      // brief, una (1) pasada de reparación dirigida antes de mostrarla.
+      const { auditLanding } = require('./design/landing-qa');
+      let qa = auditLanding(html);
+      if (brief && qa.criticalCount > 0) {
+        try {
+          const repairPrompt = `Este HTML tiene problemas de QA que DEBES corregir, manteniendo el diseño, el contenido y las clases Tailwind. Problemas:\n${qa.issues.map((i) => `- ${i.msg}`).join('\n')}\n\nDevuelve el HTML COMPLETO corregido, empezando por <!doctype html>, sin markdown ni explicación.\n\nHTML:\n${html}`;
+          const repaired = await generateWithContinuation({
+            callOnce, prompt: repairPrompt, isComplete, stripFences,
+            continuePrompt: 'Continúa EXACTAMENTE donde quedó, sin repetir, hasta cerrar </html>.'
+          });
+          if (repaired.text && !repaired.truncated) {
+            const reQa = auditLanding(repaired.text);
+            if (reQa.score >= qa.score) { html = repaired.text; qa = reQa; }
+          }
+        } catch (_) { /* la reparación es best-effort; si falla, va lo que había */ }
+      }
 
       // Inyecta el runtime de Tailwind (bundle LOCAL, sirve offline en el .exe
       // white-label — nada de CDN). El modelo escribe clases de utilidad y el
@@ -705,7 +733,7 @@ TÉCNICA: usa Tailwind (clases de utilidad) para el layout y el grueso del estil
       fs.writeFileSync(path.join(previewsDir, fileName), html, 'utf-8');
       const payload = { url: `/preview/${fileName}`, title: String(input.title || 'Vista previa') };
       eventBus.emit('hud_show_preview', payload);
-      return { ok: true, ...payload, bytes: html.length };
+      return { ok: true, ...payload, bytes: html.length, qa: { score: qa.score, summary: qa.summary, issues: qa.issues } };
     }
   });
 

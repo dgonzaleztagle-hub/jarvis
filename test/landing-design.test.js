@@ -1,6 +1,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { matchConcept, buildDesignDirective, rollSeeds } = require('../src/design/landing-design-system');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { matchConcept, buildDesignDirective, rollSeeds, planLanding } = require('../src/design/landing-design-system');
+const { auditLanding } = require('../src/design/landing-qa');
+const { recordCombo, recentCombos } = require('../src/design/variation-store');
 
 test('matchConcept calza el nicho (determinista) y el concepto cuando la señal es fuerte', () => {
   // Nicho: determinista por keywords en español.
@@ -39,4 +44,29 @@ test('rollSeeds respeta el nicho (SERIOUS no usa motion llamativo)', () => {
     const s = rollSeeds('SERIOUS');
     assert.equal(s.motion.name, 'Solid Ground', 'SERIOUS siempre va sobrio en motion');
   }
+});
+
+test('QA gate: documento bueno puntúa alto sin críticas; uno roto las detecta', () => {
+  const good = '<!doctype html><html lang="es"><head><meta name="viewport" content="width=device-width"><title>Café Lumina</title></head><body><h1 class="text-6xl">Café Lumina</h1><h2 class="text-2xl">Especialidad</h2><p class="px-4">Café de origen.</p><a class="bg-amber-700 px-6 py-3">Reservar</a></body></html>';
+  const g = auditLanding(good);
+  assert.equal(g.criticalCount, 0);
+  assert.ok(g.score >= 0.9, `esperaba score alto, fue ${g.score}`);
+
+  const bad = '<html><body><div>bienvenidos lorem ipsum dolor sit amet</div></body></html>';
+  const b = auditLanding(bad);
+  assert.ok(b.criticalCount >= 1, 'doc sin h1/title/cta debe tener críticas');
+  assert.ok(b.issues.some((i) => i.id === 'has_cta'));
+  assert.ok(b.issues.some((i) => i.id === 'no_lorem'));
+  assert.ok(b.score < g.score);
+});
+
+test('memoria de variaciones: registra y recupera por cliente; planLanding evita el combo reciente', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jarvis-var-'));
+  recordCombo(dir, 'Café Lumina', 'A|B|C|D');
+  assert.deepEqual(recentCombos(dir, 'café lumina', 3), ['A|B|C|D']); // clave normalizada
+
+  // planLanding con avoid del combo recién planificado: el siguiente difiere (best-effort).
+  const p1 = planLanding({ brief: 'cafetería de especialidad' });
+  const p2 = planLanding({ brief: 'cafetería de especialidad', avoid: [p1.combo] });
+  assert.notEqual(p2.combo, p1.combo);
 });
