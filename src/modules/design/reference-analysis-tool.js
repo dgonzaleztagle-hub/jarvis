@@ -38,6 +38,7 @@ function createReferenceAnalysisTool({ modelProvider }) {
     risk: 'low',
     permissions: [],
     required: ['url'],
+    fetchesExternalContent: true,
     aliases: { url: ['link', 'enlace', 'sitio'], pregunta: ['prompt', 'que_observar', 'foco'] },
     execute: async (input) => {
       const url = String(input.url || '').trim();

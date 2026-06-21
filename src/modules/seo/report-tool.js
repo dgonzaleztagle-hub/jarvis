@@ -14,6 +14,7 @@ function createReportTool({ modelProvider, contentHonestyClause = '' }) {
     risk: 'low',
     permissions: [],
     required: ['urls'],
+    fetchesExternalContent: true,
     aliases: { urls: ['url', 'sitios', 'links'] },
     execute: async (input) => {
       const urls = Array.isArray(input.urls) ? input.urls : (input.url ? [input.url] : []);

@@ -137,9 +137,9 @@ Si no hay forma de arreglarlo, { "fixable": false }. Sin markdown.`;
 
 // Ejecuta un paso vía el registry (respeta policy + audit). Traduce el
 // resultado a un veredicto del ejecutor.
-async function runStep(toolRegistry, tool, input, channel) {
+async function runStep(toolRegistry, tool, input, channel, fetchedExternalThisRun = false) {
   try {
-    const res = await toolRegistry.execute(tool, input || {}, { channel, inAutonomousTask: true });
+    const res = await toolRegistry.execute(tool, input || {}, { channel, inAutonomousTask: true, fetchedExternalThisRun });
     if (res.confirmationRequired) return { status: 'needs_approval', risk: res.policy?.risk };
     if (res.blocked) return { status: 'blocked', reason: res.policy?.reasons?.join('; ') || res.validation?.missing?.join(', ') || 'bloqueado' };
     return { status: 'ok', output: res.output };
@@ -161,6 +161,12 @@ async function executeTask({ goal, modelProvider, toolRegistry, channel = 'hud',
   const executed = [];
   const priorResults = [];
   let outcome = 'completed';
+  // Guardrail anti-injection: una vez que un paso trae contenido externo
+  // (web.fetch/search, analizar una URL), todo paso SIGUIENTE que escriba
+  // (risk distinto de 'low') pasa a requerir aprobación — ver policy-engine.js.
+  // Sin esto, una tool 'medium' corre libre incluso justo después de leer
+  // contenido que podría traer instrucciones inyectadas.
+  let fetchedExternalThisRun = false;
 
   for (const step of plan.steps) {
     const stepTool = String(step.tool || '');
@@ -172,13 +178,13 @@ async function executeTask({ goal, modelProvider, toolRegistry, channel = 'hud',
     }
 
     onProgress?.({ step: step.n, description: step.description, tool: stepTool });
-    let result = await runStep(toolRegistry, stepTool, step.input, channel);
+    let result = await runStep(toolRegistry, stepTool, step.input, channel, fetchedExternalThisRun);
 
     // Auto-fix: una sola reparación ante error real (no ante needs_approval/blocked).
     if (result.status === 'error') {
       const fix = await autoFixStep({ goal, step, error: result.error, priorResults, modelProvider, toolRegistry });
       if (fix && toolRegistry.get(fix.tool)) {
-        const retried = await runStep(toolRegistry, fix.tool, fix.input, channel);
+        const retried = await runStep(toolRegistry, fix.tool, fix.input, channel, fetchedExternalThisRun);
         result = { ...retried, repaired: true, originalError: result.error, repairTool: fix.tool };
       }
     }
@@ -196,7 +202,7 @@ async function executeTask({ goal, modelProvider, toolRegistry, channel = 'hud',
           priorResults, modelProvider, toolRegistry
         });
         if (fix && toolRegistry.get(fix.tool)) {
-          const retried = await runStep(toolRegistry, fix.tool, fix.input, channel);
+          const retried = await runStep(toolRegistry, fix.tool, fix.input, channel, fetchedExternalThisRun);
           result = { ...retried, repaired: true, verificationFailed: true, verificationReason: verification.reason, repairTool: fix.tool };
         } else {
           result = { status: 'error', error: `Output inválido sin corrección posible: ${verification.reason}` };
@@ -215,6 +221,8 @@ async function executeTask({ goal, modelProvider, toolRegistry, channel = 'hud',
     if (result.reason) record.reason = result.reason;
     if (result.risk) record.risk = result.risk;
     executed.push(record);
+
+    if (result.status === 'ok' && known.fetchesExternalContent) fetchedExternalThisRun = true;
 
     // La autonomía se detiene ante aprobación humana o bloqueo/fallo.
     if (result.status === 'needs_approval') { outcome = 'paused_for_approval'; break; }

@@ -137,6 +137,41 @@ test('verificación detecta output inválido sin fix posible y falla la tarea', 
   assert.match(res.steps[0].error, /inválido/);
 });
 
+test('guardrail anti-injection: una escritura medium DESPUÉS de traer contenido externo queda needs_approval', async () => {
+  let writeCalled = false;
+  const registry = registryWith([
+    { name: 'web.fetch', risk: 'low', fetchesExternalContent: true, execute: async () => ({ text: 'contenido de la web' }) },
+    { name: 'crm.update_record', risk: 'medium', execute: async () => { writeCalled = true; return { ok: true }; } }
+  ]);
+  const model = fakeModel([
+    { feasible: true, steps: [
+      { n: 1, description: 'leer la web', tool: 'web.fetch', input: {} },
+      { n: 2, description: 'actualizar el registro', tool: 'crm.update_record', input: {} }
+    ] },
+    { valid: true } // verifyStepOutput del paso 1 (fetch)
+  ]);
+
+  const res = await executeTask({ goal: 'leer y actualizar', modelProvider: model, toolRegistry: registry, channel: 'agent' });
+  assert.equal(res.status, 'paused_for_approval');
+  assert.equal(res.steps[1].status, 'needs_approval');
+  assert.equal(writeCalled, false, 'la escritura NO debe ejecutarse sin aprobación');
+});
+
+test('guardrail anti-injection: sin contenido externo previo, la misma escritura medium corre libre', async () => {
+  let writeCalled = false;
+  const registry = registryWith([
+    { name: 'crm.update_record', risk: 'medium', execute: async () => { writeCalled = true; return { ok: true }; } }
+  ]);
+  const model = fakeModel([
+    { feasible: true, steps: [{ n: 1, description: 'actualizar el registro', tool: 'crm.update_record', input: {} }] },
+    { valid: true } // verifyStepOutput
+  ]);
+
+  const res = await executeTask({ goal: 'actualizar', modelProvider: model, toolRegistry: registry, channel: 'agent' });
+  assert.equal(res.status, 'completed');
+  assert.equal(writeCalled, true, 'sin fetch previo, medium corre directo (comportamiento de hoy, sin cambios)');
+});
+
 test('la tool tasks.run_autonomous queda registrada y anti-recursión activa', () => {
   const { createRuntime } = require('../src/app-runtime');
   const runtime = createRuntime({ dataDir: tempDataDir(), agents: { autoStart: false } });

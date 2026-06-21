@@ -56,6 +56,18 @@ class PolicyEngine {
       }
     }
 
+    // Guardrail anti-injection: una corrida autónoma desatendida (task-executor)
+    // que ya trajo contenido externo (web.fetch/search, analizar una URL) no
+    // puede seguir escribiendo sin aprobación, aunque la tool sea 'medium' — un
+    // hecho que 'high'/'critical' ya cubren solos (siempre exigen confirmación
+    // en autónomo, ver arriba), pero 'medium' corre libre por defecto. El
+    // contenido externo puede traer instrucciones inyectadas; sin un humano
+    // mirando, escalar el riesgo es la única defensa real.
+    if (context.fetchedExternalThisRun && risk !== 'low') {
+      result.requiresConfirmation = true;
+      result.reasons.push('Esta corrida ya trajo contenido externo (web.fetch/search o similar): cualquier escritura posterior requiere aprobación humana, por riesgo de instrucciones inyectadas en ese contenido.');
+    }
+
     // Destinatario ambiguo (2+ contactos empatan con lo que escribió el
     // usuario): SOLO agrega confirmación, nunca la quita — ni siquiera si el
     // contenido fue dictado literal. Va DESPUÉS de la procedencia para poder

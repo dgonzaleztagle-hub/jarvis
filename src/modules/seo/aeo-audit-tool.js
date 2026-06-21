@@ -65,6 +65,7 @@ function createAeoAuditTool() {
     risk: 'low',
     permissions: [],
     required: ['url'],
+    fetchesExternalContent: true,
     execute: ({ url }) => auditAeo(url)
   };
 }

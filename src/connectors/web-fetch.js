@@ -300,6 +300,7 @@ function createWebFetchTools() {
       risk: 'low',
       permissions: [],
       required: ['url'],
+      fetchesExternalContent: true,
       execute: executeFetch,
     },
     {
@@ -308,6 +309,7 @@ function createWebFetchTools() {
       risk: 'low',
       permissions: [],
       required: ['url'],
+      fetchesExternalContent: true,
       execute: executeAuditSeo,
     },
     {
@@ -320,6 +322,7 @@ function createWebFetchTools() {
         query: ['buscar', 'busca', 'search', 'q', 'consulta'],
         maxResults: ['max_results', 'limit', 'count', 'n']
       },
+      fetchesExternalContent: true,
       execute: executeSearch,
     },
   ];
