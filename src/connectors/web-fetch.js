@@ -325,4 +325,4 @@ function createWebFetchTools() {
   ];
 }
 
-module.exports = { createWebFetchTools };
+module.exports = { createWebFetchTools, executeAuditSeo, fetchUrl, fetchText, extractJsonLd, extractAllTags, stripTags };

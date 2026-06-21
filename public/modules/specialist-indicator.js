@@ -12,7 +12,8 @@
 
 const COLORS = {
   'Diseño': '#00e5ff',
-  'Marketing': '#ff5cf0'
+  'Marketing': '#ff5cf0',
+  'SEO': '#ffb454'
 };
 
 let chip = null;

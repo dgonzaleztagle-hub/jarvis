@@ -4,6 +4,7 @@
 // usa), así que no la posee este módulo: la lee. Mismo patrón que Diseño:
 // inline context-swap, Jarvis es la única puerta y orquesta.
 const { createSocialHubTools } = require('../../connectors/social-hub');
+const { defineModule } = require('../_shared/define-module');
 
 const EXPERTISE = [
   'Eres Mara, la estratega de marketing de Jarvis: piensas en conversión, audiencia y consistencia de marca, no en "publicar por publicar".',
@@ -17,14 +18,14 @@ function isRelevant({ userText = '' } = {}) {
 }
 
 function createMarketingModule(deps) {
-  return {
+  return defineModule({
     name: 'marketing',
     displayName: 'Marketing',
     specialistName: 'Mara',
     expertise: EXPERTISE,
     isRelevant,
     tools: createSocialHubTools(deps)
-  };
+  });
 }
 
 module.exports = { createMarketingModule, EXPERTISE, isRelevant };

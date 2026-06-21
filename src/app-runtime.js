@@ -52,6 +52,7 @@ const { createSheetsMemoryTools } = require('./connectors/sheets-memory');
 const { createBrandProfileTools } = require('./connectors/brand-profile');
 const { createDesignModule } = require('./modules/design');
 const { createMarketingModule } = require('./modules/marketing');
+const { createSeoModule } = require('./modules/seo');
 
 function createRuntime(options = {}) {
   const dataDir = options.dataDir || DATA_DIR;
@@ -450,6 +451,8 @@ function createRuntime(options = {}) {
   });
   // Módulo MARKETING (especialista "Mara"): dueño del grupo social.*.
   const marketingModule = createMarketingModule({ credentialVault, dataDir, googleAuthFactory });
+  // Módulo SEO/AEO/GEO (especialista "Teo"): reportes de auditoría, no JSON crudo.
+  const seoModule = createSeoModule({ modelProvider, contentHonestyClause: CONTENT_HONESTY_CLAUSE });
 
   const contextAssembler = new ContextAssembler({
     memoryStore,
@@ -478,7 +481,7 @@ function createRuntime(options = {}) {
     getActiveModel,
     persona,
     historyStore,
-    modules: [designModule, marketingModule]
+    modules: [designModule, marketingModule, seoModule]
   });
   toolRegistry.register({
     name: 'conversation.recall',
@@ -645,6 +648,11 @@ function createRuntime(options = {}) {
 
   // Tools de marketing (social.*): las provee el módulo Marketing (Mara).
   for (const tool of marketingModule.tools) {
+    toolRegistry.register(tool);
+  }
+
+  // Tools de SEO/AEO/GEO: las provee el módulo SEO (Teo).
+  for (const tool of seoModule.tools) {
     toolRegistry.register(tool);
   }
 

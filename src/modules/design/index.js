@@ -9,6 +9,7 @@
 const { createPreviewTool } = require('./preview-tool');
 const { createReferenceAnalysisTool } = require('./reference-analysis-tool');
 const { createStockPhotoTool } = require('./stock-photo-tool');
+const { defineModule } = require('../_shared/define-module');
 
 // Cerebro del módulo: identidad/expertise lista para inyectar al system prompt
 // cuando el turno entra en dominio de diseño (context-swap, siguiente capa).
@@ -26,14 +27,14 @@ function isRelevant({ userText = '' } = {}) {
 }
 
 function createDesignModule(deps) {
-  return {
+  return defineModule({
     name: 'design',
     displayName: 'Diseño',
     specialistName: 'Alex', // el "departamento" tiene cara: Alex, director creativo
     expertise: EXPERTISE,
     isRelevant,
     tools: [createPreviewTool(deps), createReferenceAnalysisTool(deps), createStockPhotoTool(deps)]
-  };
+  });
 }
 
 module.exports = { createDesignModule, EXPERTISE, isRelevant };
