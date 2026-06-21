@@ -26,10 +26,12 @@ test('preview.render_html materializa el HTML y emite evento para el HUD', async
   assert.match(res.url, /^\/preview\/preview_.*\.html$/);
   assert.equal(res.title, 'Demo');
 
-  // El archivo quedó escrito en disco con el contenido.
+  // El archivo quedó escrito en disco con el contenido, y se inyectó el runtime
+  // de Tailwind (bundle local) para que el preview salga con estilos.
   const fileName = res.url.replace('/preview/', '');
   const onDisk = fs.readFileSync(path.join(dataDir, 'previews', fileName), 'utf-8');
-  assert.equal(onDisk, '<h1>Hola</h1>');
+  assert.match(onDisk, /<h1>Hola<\/h1>/);
+  assert.match(onDisk, /vendor\/tailwind\.js/, 'todo preview debe inyectar el runtime local de Tailwind');
 
   // Se emitió el evento que el HUD escucha.
   assert.ok(emitted);
