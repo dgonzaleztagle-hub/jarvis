@@ -2,10 +2,11 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "jarvis-codex",
+      "name": "jarvis",
       "runtimeExecutable": "node",
       "runtimeArgs": ["src/server.js"],
-      "port": 3417
+      "port": 3417,
+      "autoPort": false
     }
   ]
 }
