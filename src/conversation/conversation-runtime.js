@@ -45,26 +45,30 @@ class ConversationRuntime {
     this._lessonsInPlay = [];
   }
 
-  // Si el pedido entra en el dominio de un módulo, arma el contexto del
-  // especialista (su cerebro/expertise) para inyectarlo en el turno. Context-swap
-  // inline: NO abre un sub-loop ni otro chat; Jarvis sigue orquestando y responde.
-  buildSpecialistContext(text) {
+  // Primer módulo cuyo dominio calza con el pedido (o null). Jarvis sigue siendo
+  // la única puerta; esto solo decide qué cerebro especialista se activa.
+  activeModuleFor(text) {
     for (const m of this.modules) {
       try {
-        if (m && typeof m.isRelevant === 'function' && m.isRelevant({ userText: text })) {
-          const domain = m.displayName || m.name;
-          const who = m.specialistName ? `${m.specialistName} (${domain})` : domain;
-          const name = m.specialistName || 'el especialista';
-          return [
-            `[Especialista del turno: ${who}]`,
-            `Este pedido entra en el dominio ${domain}. Trabajas junto a ${name}, que es parte de Jarvis (no un chat aparte): adopta su criterio para este turno.`,
-            m.expertise || '',
-            `ATRIBUYE el trabajo a ${name} POR NOMBRE, en este turno y de forma natural — sea pidiendo lo que falta ("${name} necesita saber...") o entregando ("${name} ya armó..."). El usuario debe VER que ${name} está trabajando; no lo escondas. Igual sigues siendo tú quien orquesta y responde.`
-          ].filter(Boolean).join('\n');
-        }
+        if (m && typeof m.isRelevant === 'function' && m.isRelevant({ userText: text })) return m;
       } catch (_) { /* un módulo nunca debe romper el turno */ }
     }
-    return '';
+    return null;
+  }
+
+  // Arma el contexto del especialista (su cerebro/expertise) para inyectarlo en
+  // el turno. Context-swap inline: NO abre un sub-loop ni otro chat.
+  buildSpecialistContext(m) {
+    if (!m) return '';
+    const domain = m.displayName || m.name;
+    const name = m.specialistName || 'el especialista';
+    const who = m.specialistName ? `${m.specialistName} (${domain})` : domain;
+    return [
+      `[Especialista del turno: ${who}]`,
+      `Este pedido entra en el dominio ${domain}. Trabajas junto a ${name}, que es parte de Jarvis (no un chat aparte): adopta su criterio para este turno.`,
+      m.expertise || '',
+      `ATRIBUYE el trabajo a ${name} POR NOMBRE, en este turno y de forma natural — sea pidiendo lo que falta ("${name} necesita saber...") o entregando ("${name} ya armó..."). El usuario debe VER que ${name} está trabajando; no lo escondas. Igual sigues siendo tú quien orquesta y responde.`
+    ].filter(Boolean).join('\n');
   }
 
   // Registra un turno completo (usuario + resumen del modelo) en memoria y en
@@ -440,8 +444,18 @@ class ConversationRuntime {
     const summaryContext = this._cachedSummary || '';
 
     // Especialista de turno: si el pedido entra en el dominio de un módulo
-    // (ej: Diseño → Alex), se inyecta su cerebro como contexto del turno.
-    const specialistContext = this.buildSpecialistContext(text);
+    // (ej: Diseño → Alex), se inyecta su cerebro como contexto del turno y se
+    // avisa al HUD para que muestre al especialista trabajando.
+    const specialist = this.activeModuleFor(text);
+    const specialistContext = this.buildSpecialistContext(specialist);
+    if (specialist) {
+      this.eventBus?.emit('specialist_active', {
+        name: specialist.name,
+        domain: specialist.displayName || specialist.name,
+        specialist: specialist.specialistName || null,
+        taskId: conversationTask.id
+      });
+    }
 
     // El contexto dinámico viaja en el mensaje actual, no en el system ni en el
     // historial: el system queda estable (cacheable) y el historial guarda el

@@ -12,6 +12,7 @@ import {
 import { addMessage, showTyping, hideTyping, buildDisplay, appendDeferredContent } from './modules/feed.js';
 import { onHudShowFile } from './modules/inbox-viewer.js';
 import { onHudShowPreview } from './modules/preview-panel.js';
+import { setupSpecialistIndicator } from './modules/specialist-indicator.js';
 import { onHudOpenUrl } from './modules/open-url.js';
 import { renderTasks, renderEvents, loadTasks, announceTaskClosure, findPendingToolResult, confirmPendingTask } from './modules/tasks.js';
 import {
@@ -290,6 +291,7 @@ async function boot() {
   }).catch(() => {});
 
   const stream = new EventSource('/events/stream');
+  setupSpecialistIndicator(stream);
   stream.addEventListener('ready', () => { dom.eventsPill.textContent = 'EVT'; dom.eventsPill.className = 'pill ok'; });
   stream.onmessage = () => {};
   for (const t of ['task_started','task_progress','task_completed','task_failed','task_needs_confirmation','task_confirmed']) {
