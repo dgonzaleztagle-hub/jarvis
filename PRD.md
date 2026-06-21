@@ -79,14 +79,13 @@ Detalle operativo por vertical (necesidades, fuentes preferidas, riesgos) en [do
 | **Publicación redes sociales** ✅ | `social.*` — Hub multi-plataforma: Meta (FB+IG), TikTok, LinkedIn, YouTube. JIT onboarding por plataforma. Post inmediato y programado. |
 | **Pipeline de video** ✅ | `video.*` — capa base (ffmpeg: corte silencios, info, subtítulos, voiceover mixer; Gemini STT; Pexels stock footage); capa break-glass (Remotion: 16 plantillas con spring physics — KineticText, DataViz, Testimonial, CodeExplainer, MarketingReel compositor, etc.). `video.compose` orquesta el pipeline completo. |
 | **Memoria externa** ✅ | `memory.*` — Google Sheet en Drive del usuario como respaldo remoto. Tabs: Proyectos, Contactos, Decisiones, Corridas. Append-safe, editable manualmente. |
-| **Módulos-agente (Diseño/Marketing)** ✅ | Departamentos built-in con cara propia, distintos de los agentes `agents.create` del usuario (esos son cron jobs). **Alex** (Diseño): `preview.render_html` (landings premium, sistema de variabilidad anti-plantilla por nicho, Tailwind+fuentes offline, QA gate, memoria de variaciones), `design.analyze_reference` (screenshot real vía Playwright + visión del modelo: layout bento/grid, simetría, jerarquía), `design.find_photos` (fotografía real gratuita vía Pexels). **Mara** (Marketing): dueña de `social.*`. Context-swap inline (sin sub-loop) por dominio del turno; HUD muestra quién está trabajando. Ver detalle en sección 4c. |
+| **Módulos-agente (Diseño/Marketing/SEO)** ✅ | Departamentos built-in con cara propia, distintos de los agentes `agents.create` del usuario (esos son cron jobs). **Alex** (Diseño): `preview.render_html` (landings premium, sistema de variabilidad anti-plantilla por nicho, Tailwind+fuentes offline, QA gate, memoria de variaciones), `design.analyze_reference` (screenshot real vía Playwright + visión del modelo: layout bento/grid, simetría, jerarquía), `design.find_photos` (fotografía real gratuita vía Pexels). **Mara** (Marketing): dueña de `social.*`, incluye `social.insights`/`social.report` (cierra el loop crear→publicar→medir→optimizar, Meta por ahora). **Teo** (SEO/AEO/GEO): `seo.audit_aeo` (citabilidad para motores de respuesta de IA — eje distinto del SEO técnico clásico) + `seo.generate_report` (el entregable real: reporte narrativo presentable a un cliente, no JSON crudo). Context-swap inline (sin sub-loop) por dominio del turno; HUD muestra quién está trabajando. Ver detalle en sección 4c. |
 
 ### P1 — Pendiente
 
 | Capacidad | Descripción |
 |---|---|
 | Web research | Investiga con fuentes verificadas, guarda solo lo confiable. |
-| SEO audit | Analiza sitios web con checklist y severidad. |
 | Reportes | Genera reportes estructurados en Google Docs/Sheets. |
 | Control de navegador | Navega, llena formularios, extrae información. |
 | Desktop automation | Abre apps, controla ventanas, OCR de pantalla. |
@@ -133,9 +132,10 @@ Jarvis crea agentes recurrentes conversando con el usuario. No genera código: g
 - **Discovery anti-alucinación**: antes de crear, el modelo revisa su catálogo de tools (no rechaza lo viable, no crea zombis), hace máx 2 preguntas si la misión es ambigua, nunca inventa horarios, y sugiere qué conector faltaría si la capacidad no existe
 - Panel HUD de agentes vivos: estado, agenda, última corrida, pausar/ejecutar — se abre al arrancar si hay agentes
 
+**Resuelto (2026-06-21):** namespace de memoria por agente (`sourceAgentId` en knowledge-graph.js/memory-store.js — una corrida no contamina la memoria principal ni la de otros agentes, pero sí la suya en corridas futuras), tope diario GLOBAL de gasto (`agents.set_daily_budget`, además del tope por-agente que ya existía) + alerta al 80% del tope (por-agente o global, misma cola de notificaciones que las corridas programadas), y guardrail anti-injection real: una corrida que trae contenido externo (`web.fetch`/`search`, analizar una URL) escala cualquier escritura siguiente (`risk` distinto de `low`) a requerir aprobación — el hallazgo fue que `risk:high/critical` ya pausaban solos en autónomo; el gap real estaba en `risk:medium`, que corría libre.
+
 **Pendiente de la plataforma de agentes:**
-- Namespace de memoria por agente (un agente-tutor no debe contaminar la memoria principal)
-- Guardrail anti-injection: agente desatendido que procesa contenido externo (web.fetch) no ejecuta tools de escritura de alto riesgo — deja aprobación pendiente
+- Skill registry con lifecycle completo, procedural memory (acotado: la "memoria de trabajo" básica de un agente ya queda cubierta por su namespace propio; lo que falta es detectar tareas repetidas y proponerlas como skills reusables — sigue en P2 Futuro, sin diseño todavía)
 - Escalera de autonomía: L1 usuario pide (hoy) → L2 Jarvis propone desde patrones observados → L3 crea solo con presupuesto → L4 (agentes creando agentes) BLOQUEADO por diseño
 
 ### Decisión arquitectónica documentada: por qué los paneles son modulares
@@ -527,9 +527,9 @@ gobernanza visible del PRD §2. Pendiente: aprendizaje de auto-aprobación por r
 
 **Gobernanza de costos (BYOK + agentes = riesgo de boleta sorpresa):**
 - Medición por propósito y modelo: implementada (usage-meter)
-- Tope diario configurable de gasto total: PENDIENTE
+- Tope diario configurable de gasto total: ✅ implementado (`agents.set_daily_budget` — tope GLOBAL combinado de todos los agentes, corte automático en corridas programadas Y manuales, ver Fase 4)
 - Tope en dólares por agente con corte automático: ✅ implementado (`maxCostPerDayUsd` opcional en `agents.create`, corte automático al cruzar el tope — ver Fase 4)
-- Alerta visible en HUD al cruzar umbral: PENDIENTE
+- Alerta visible en HUD al cruzar umbral: ✅ implementado (`agent_budget_warning` al 80% del tope por-agente o del global, misma cola de notificaciones por voz/feed que las corridas programadas)
 - Disclaimer de gasto BYOK en onboarding + límites duros por defecto: el disclaimer solo no defiende; el corte automático sí
 
 ### Degraded Mode (obligatorio)
@@ -691,9 +691,11 @@ Formato no es decoración — es parte del contrato de cada respuesta. Reglas ap
 - [x] Notificación de corridas programadas (voz HUD + Telegram)
 - [x] Invariante anti-recursión (corridas no gestionan agentes) + go-ahead conversacional cuenta como confirmación (risk high) + confirmaciones duplicadas se reemplazan
 - [x] **Ejecutor autónomo multi-paso** (Fase D de la fusión, `src/agents/task-executor.js`): tool `tasks.run_autonomous` que planifica una tarea compleja en pasos, los ejecuta encadenando resultados con auto-fix (1 reintento), y se detiene ante pasos de alto riesgo (`needs_approval`). Anti-recursión por policy. Respeta audit + policy en cada paso. Ver [docs/FUSION_KNOWLEDGE_MERGE.md](../docs/FUSION_KNOWLEDGE_MERGE.md)
-- [x] Presupuesto en $ por agente/día con corte automático: `maxCostPerDayUsd` opcional en `agents.create`; el scheduler mide el delta del usage-meter en cada corrida y acumula `costToday` (resetea por día como `runsToday`). Si se cruza el tope, el agente no corre más ese día aunque le queden corridas/día. Sin `maxCostPerDayUsd` (default) no cambia nada. 3 tests en `test/agent-cost-budget.test.js`
-- [ ] Namespace de memoria por agente
-- [ ] Skill registry con lifecycle completo, procedural memory
+- [x] Presupuesto en $ por agente/día con corte automático: `maxCostPerDayUsd` opcional en `agents.create`; el scheduler mide el delta del usage-meter en cada corrida y acumula `costToday` (resetea por día como `runsToday`). Si se cruza el tope, el agente no corre más ese día aunque le queden corridas/día. Sin `maxCostPerDayUsd` (default) no cambia nada.
+- [x] Tope diario GLOBAL de gasto + alerta de presupuesto: `agents.set_daily_budget`/`agents.budget_status`, corte automático en corridas programadas y manuales (`usage-meter.getCostForDate`); aviso al 80% del tope (por-agente o global) por la misma cola de notificaciones que las corridas programadas. Tests en `test/agent-cost-budget.test.js` (6 casos)
+- [x] Namespace de memoria por agente: `sourceAgentId` en knowledge-graph.js/memory-store.js — una corrida no contamina la memoria principal ni la de otros agentes; sí ve su propio historial en corridas futuras (memoria de trabajo propia). Tests en `test/agent-memory-namespace.test.js`
+- [x] Guardrail anti-injection: una corrida que trae contenido externo (`fetchesExternalContent` en la tool) escala cualquier escritura siguiente (`risk` ≠ `low`) a requerir aprobación — `risk:high/critical` ya pausaban solos en autónomo, el gap real era `medium`. Tests en `test/task-executor.test.js`
+- [ ] Skill registry con lifecycle completo, procedural memory (la memoria de trabajo básica ya quedó cubierta por el namespace; falta detectar tareas repetidas y proponerlas como skills — sigue en P2 Futuro)
 - [~] Ruteo de modelos por tipo de tarea (barato conversa, fuerte construye): **infraestructura hecha** — catálogo por tier (`src/model/model-catalog.js`: Gemini Flash free / Haiku / Sonnet fuerte recomendado / Opus no-recomendado), swap en caliente dentro de un ecosistema (`model.set_active`, `GET/POST /model/active`), cruce de proveedor = onboarding. Principio: recomendar el modelo MEDIO capaz (Sonnet), no el tope. **Falta** la capa de comportamiento: disclaimer calibrado antes + recomendación REACTIVA de subir de tier cuando el usuario se queja (ver memoria estrategia de modelos)
 
 ### Fase 4b — Contenido y Redes Sociales (ADELANTADA) ✅
@@ -706,13 +708,12 @@ Formato no es decoración — es parte del contrato de cada respuesta. Reglas ap
 ### Fase 4c — Módulos-Agente (Departamentos especializados) ✅
 - [x] Framework de módulos built-in (`src/modules/<dominio>/`): context-swap inline por dominio del turno, sin sub-loop; HUD muestra quién está trabajando
 - [x] **Alex (Diseño)**: `preview.render_html`, `design.analyze_reference` (Playwright + visión), `design.find_photos` (Pexels)
-- [x] **Mara (Marketing)**: dueña de `social.*`
-- [ ] Tercer módulo (candidato: SEO/AEO/GEO — auditoría técnica + optimización para motores de respuesta de IA) — recién ahí se justifica extraer un `_framework.js` común
+- [x] **Mara (Marketing)**: dueña de `social.*`, + `social.insights`/`social.report` (cierra el loop crear→publicar→medir, Meta por ahora)
+- [x] **Teo (SEO/AEO/GEO)**: 3er módulo — `seo.audit_aeo` (citabilidad para motores de respuesta de IA, eje distinto del SEO técnico) + `seo.generate_report` (reporte narrativo presentable a cliente, no JSON crudo). `src/modules/_shared/define-module.js` extraído al llegar al 3er caso real (valida el contrato, no abstrae nada pesado)
 - [ ] Avatar animado del especialista en el HUD (teatro, baja prioridad)
 
 ### Fase 5 — Investigación y Reportes
 - Web research con fuentes verificadas
-- SEO audit (tool base ya existe: web.audit_seo), reportes exportables
 - **Notetaker de reuniones** (bot Meet/Zoom: transcripción + minuta + acuerdos) — distinto al módulo ya hecho (que graba el micro del PC)
 
 ### Fase 6 — Conectores externos
