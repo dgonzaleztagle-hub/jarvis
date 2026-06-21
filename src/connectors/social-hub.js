@@ -294,6 +294,88 @@ function createSocialHubTools({ credentialVault, dataDir, googleAuthFactory }) {
       }
     },
 
+    // ── social.insights ──────────────────────────────────────────────────────
+    {
+      name: 'social.insights',
+      description: 'Métricas de un post publicado (reach, impresiones, engagement). Solo Meta (FB/IG) por ahora. Input: { postId: "id interno del social.list_posts", platform?: "fb"|"ig" — si el post se publicó en ambas, elige cuál mirar (default fb) }.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          postId:   { type: 'string', description: 'id devuelto por social.publish / social.list_posts (NO el id nativo de Meta)' },
+          platform: { type: 'string', enum: ['fb', 'ig'], description: 'Cuál cara del post mirar si se publicó en ambas (default fb)' }
+        },
+        required: ['postId']
+      },
+      risk: 'low',
+      required: ['postId'],
+      async execute(input) {
+        const posts = loadPosts();
+        const post = posts.find((p) => p.id === input.postId);
+        if (!post) return { ok: false, error: `No encontré el post "${input.postId}" en el historial.` };
+
+        const metaResult = post.results?.meta;
+        if (!metaResult) return { ok: false, error: 'Este post no tiene resultados de Meta (FB/IG) — insights solo cubre Meta por ahora.' };
+
+        const platform = input.platform === 'ig' ? 'ig' : 'fb';
+        const nativeId = platform === 'ig' ? metaResult.instagram?.mediaId : metaResult.facebook?.postId;
+        if (!nativeId) return { ok: false, error: `Este post no tiene un id de ${platform === 'ig' ? 'Instagram' : 'Facebook'} para consultar.` };
+
+        return drivers.meta.insights(nativeId, platform);
+      }
+    },
+
+    // ── social.report ────────────────────────────────────────────────────────
+    {
+      name: 'social.report',
+      description: 'Resumen agregado de métricas de los últimos posts publicados en Meta (FB/IG): reach total, engagement promedio, mejor post. Cierra el loop crear→publicar→medir→optimizar. Input: { limit? (default 10), platform? ("fb"|"ig", default fb) }.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          limit:    { type: 'number', description: 'Cuántos posts recientes incluir (default 10)' },
+          platform: { type: 'string', enum: ['fb', 'ig'] }
+        }
+      },
+      risk: 'low',
+      async execute(input) {
+        const platform = input.platform === 'ig' ? 'ig' : 'fb';
+        const limit = Math.min(Number(input.limit) || 10, 50);
+
+        const candidates = loadPosts()
+          .filter((p) => p.status === 'published' && p.results?.meta)
+          .filter((p) => (platform === 'ig' ? p.results.meta.instagram?.mediaId : p.results.meta.facebook?.postId))
+          .slice(-limit)
+          .reverse();
+
+        if (candidates.length === 0) {
+          return { ok: true, platform, postsAnalyzed: 0, message: `No hay posts publicados en ${platform === 'ig' ? 'Instagram' : 'Facebook'} todavía.` };
+        }
+
+        const rows = [];
+        for (const post of candidates) {
+          const nativeId = platform === 'ig' ? post.results.meta.instagram.mediaId : post.results.meta.facebook.postId;
+          const result = await drivers.meta.insights(nativeId, platform);
+          rows.push({ ...result, postId: post.id, text: (post.text || '').slice(0, 60), publishedAt: post.publishedAt });
+        }
+
+        const ok = rows.filter((r) => r.ok);
+        const reachKey = platform === 'ig' ? 'reach' : 'post_impressions';
+        const totalReach = ok.reduce((sum, r) => sum + (Number(r.metrics?.[reachKey]) || 0), 0);
+        const best = ok.length
+          ? ok.reduce((a, b) => (Number(b.metrics?.[reachKey]) || 0) > (Number(a.metrics?.[reachKey]) || 0) ? b : a)
+          : null;
+
+        return {
+          ok: true,
+          platform,
+          postsAnalyzed: rows.length,
+          postsWithData: ok.length,
+          totalReach,
+          bestPost: best ? { postId: best.postId, text: best.text, [reachKey]: best.metrics?.[reachKey] } : null,
+          posts: rows
+        };
+      }
+    },
+
     // ── social.list_posts ────────────────────────────────────────────────────
     {
       name: 'social.list_posts',

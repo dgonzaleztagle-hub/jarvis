@@ -289,6 +289,30 @@ function createMetaDriver({ credentialVault, dataDir }) {
       return results;
     },
 
+    async insights(postId, platform = 'fb') {
+      const token = await getToken();
+      if (!token) throw new Error('Meta no configurado. Usa social.connect { platform: "meta" }.');
+      if (!postId) throw new Error('insights requiere postId.');
+
+      // FB (post de página) e IG (media) usan métricas distintas en la API.
+      const metric = platform === 'ig'
+        ? 'impressions,reach,saved,likes,comments,shares'
+        : 'post_impressions,post_engaged_users,post_reactions_by_type_total,post_clicks';
+
+      try {
+        const data = await metaGet(`/${postId}/insights?metric=${metric}`, token);
+        const values = {};
+        for (const item of (data.data || [])) {
+          values[item.name] = item.values?.[0]?.value ?? item.values?.[0]?.values ?? null;
+        }
+        return { ok: true, postId, platform, metrics: values };
+      } catch (err) {
+        // No todas las métricas aplican a todo tipo de media (ej. Reels vs imagen
+        // estática) — devolver el error real en vez de fingir métricas vacías.
+        return { ok: false, postId, platform, error: err.message };
+      }
+    },
+
     loadPosts,
     savePosts
   };
