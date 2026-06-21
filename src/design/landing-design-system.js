@@ -197,7 +197,7 @@ CONCEPTO DE CONTENIDO — "${concept.name}" (calza con el rubro "${concept.niche
 ${concept.content}` : '';
 
   const paletteLine = brandColors && (brandColors.primary || brandColors.accent)
-    ? `PALETA: usa los colores de marca del cliente como base — primario ${brandColors.primary || ''} ${brandColors.secondary ? `/ secundario ${brandColors.secondary}` : ''} ${brandColors.accent ? `/ acento ${brandColors.accent}` : ''}. La estrategia "${seeds.color.name}" guía la intensidad, no pisa la marca.`
+    ? `PALETA (MARCA ACTIVA — manda sobre cualquier estrategia de color): usa EXACTAMENTE estos hex como paleta dominante, con clases Tailwind de valor arbitrario (bg-[${brandColors.primary}], text-[${brandColors.primary}], border-[${brandColors.primary}]) o CSS vars — no los "interpretes" ni los suavices. Primario ${brandColors.primary || ''} (acentos, CTA, énfasis)${brandColors.secondary ? `, secundario ${brandColors.secondary}` : ''}${brandColors.accent ? `, acento ${brandColors.accent}` : ''}. Construye fondos y neutros en armonía con ellos.`
     : `PALETA: estrategia "${seeds.color.name}" — ${seeds.color.desc}. Define 2-3 hex coherentes con el rubro y úsalos consistentes.`;
 
   return `Actúa como DIRECTOR CREATIVO antes de escribir una línea. Esto NO es una landing genérica: el objetivo es "WOW por defecto" — que parezca pieza de Awwwards, no plantilla. Elimina todo "olor a plantilla".
@@ -206,7 +206,7 @@ NICHO: ${niche === 'SERIOUS' ? 'SERIOUS / INSTITUCIONAL → High Fidelity Wow: f
 
 DIRECCIÓN DE ARTE (dados ya tirados — síguelos salvo que choquen con el rubro; si chocan, ajusta SOLO esa variable y dilo implícitamente en el diseño):
 - LAYOUT: ${seeds.layout.name} — ${seeds.layout.desc} (${seeds.layout.vibe}).
-- TIPOGRAFÍA: ${seeds.typography.name} — titulares en "${seeds.typography.header}", cuerpo en "${seeds.typography.body}" (${seeds.typography.vibe}). Cárgalas con <link> de Google Fonts en el <head> y mapéalas en tailwind.config (font-display/font-sans) o por CSS var. La tipografía es el 80% del diseño: úsala con tamaños grandes y jerarquía fuerte.
+- TIPOGRAFÍA: ${seeds.typography.name} — titulares en "${seeds.typography.header}", cuerpo en "${seeds.typography.body}" (${seeds.typography.vibe}). Estas fuentes YA están cargadas localmente (no agregues <link> de Google Fonts): úsalas directo por font-family en un <style> (ej: definir clases/CSS vars y aplicarlas a títulos y cuerpo). La tipografía es el 80% del diseño: tamaños grandes y jerarquía fuerte.
 - MOTION: ${seeds.motion.name} — ${seeds.motion.desc}. Hazlo solo con CSS (transitions, @keyframes de revelado, scroll-snap, hover). Nada de librerías JS.
 - ${paletteLine}
 

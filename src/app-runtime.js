@@ -646,13 +646,21 @@ function createRuntime(options = {}) {
 
       if (!html.trim() && brief) {
         const { buildDesignDirective } = require('./design/landing-design-system');
-        const designDirective = buildDesignDirective({ brief });
+        // Si hay una marca activa con colores, la landing los usa como base.
+        let brandColors = null;
+        try {
+          const bp = brandTools.getActiveProfile && brandTools.getActiveProfile();
+          if (bp && Array.isArray(bp.colors) && bp.colors.length) {
+            brandColors = { primary: bp.colors[0], secondary: bp.colors[1] || null, accent: bp.colors[2] || null };
+          }
+        } catch (_) { /* sin marca activa: paleta del rubro */ }
+        const designDirective = buildDesignDirective({ brief, brandColors });
         const genPrompt = `${designDirective}
 
 ---
 
 Ahora genera el documento HTML COMPLETO y autocontenido para: ${brief}.
-TÉCNICA: usa Tailwind (clases de utilidad) para el layout y el grueso del estilo — el runtime de Tailwind YA está inyectado, NO agregues el script ni el CDN de Tailwind. SÍ carga las fuentes de Google Fonts con <link> en el <head> según la dirección de arte. Usa un único bloque <style> SOLO para lo que Tailwind no cubre (font-family de las fuentes elegidas, @keyframes de revelado, grano/textura, scroll-snap). No uses imágenes externas: resuelve lo visual con color, gradientes, formas y tipografía. Responsive mobile-first (sm/md/lg). Devuelve SOLO el HTML empezando por <!doctype html>, sin markdown ni explicación.`;
+TÉCNICA: usa Tailwind (clases de utilidad) para el layout y el grueso del estilo — el runtime de Tailwind YA está inyectado, NO agregues el script ni el CDN de Tailwind. Las fuentes de la dirección de arte YA están cargadas localmente (no agregues <link> de Google Fonts): aplícalas por font-family en el <style>. Usa un único bloque <style> SOLO para lo que Tailwind no cubre (font-family de las fuentes elegidas, @keyframes de revelado, grano/textura, scroll-snap). No uses imágenes externas: resuelve lo visual con color, gradientes, formas y tipografía. Responsive mobile-first (sm/md/lg). Devuelve SOLO el HTML empezando por <!doctype html>, sin markdown ni explicación.`;
         try {
           const { text, truncated } = await generateWithContinuation({
             callOnce,
@@ -676,16 +684,20 @@ TÉCNICA: usa Tailwind (clases de utilidad) para el layout y el grueso del estil
       // white-label — nada de CDN). El modelo escribe clases de utilidad y el
       // motor las compila en el browser. Así la calidad de diseño deja de
       // depender de que el modelo escriba CSS a mano en cada landing.
-      // Solo el runtime; las fuentes y la config tipográfica las decide el
-      // director de arte en el propio documento (evita pisar su font-family).
-      function injectTailwind(doc) {
+      // Runtime de Tailwind + fuentes locales (offline). Las font-family las
+      // elige el director de arte; acá solo garantizamos que estén disponibles
+      // sin depender de Google (white-label offline).
+      function injectAssets(doc) {
         if (/vendor\/tailwind\.js/.test(doc)) return doc; // ya inyectado
-        const tag = '<script src="/public/vendor/tailwind.js"></script>';
-        if (/<head[^>]*>/i.test(doc)) return doc.replace(/<head[^>]*>/i, (m) => `${m}\n${tag}`);
-        if (/<html[^>]*>/i.test(doc)) return doc.replace(/<html[^>]*>/i, (m) => `${m}\n<head>\n${tag}\n</head>`);
-        return `${tag}\n${doc}`;
+        const tags = [
+          '<link rel="stylesheet" href="/public/vendor/fonts.css">',
+          '<script src="/public/vendor/tailwind.js"></script>'
+        ].join('\n');
+        if (/<head[^>]*>/i.test(doc)) return doc.replace(/<head[^>]*>/i, (m) => `${m}\n${tags}`);
+        if (/<html[^>]*>/i.test(doc)) return doc.replace(/<html[^>]*>/i, (m) => `${m}\n<head>\n${tags}\n</head>`);
+        return `${tags}\n${doc}`;
       }
-      html = injectTailwind(html);
+      html = injectAssets(html);
 
       const previewsDir = path.join(dataDir, 'previews');
       fs.mkdirSync(previewsDir, { recursive: true });
