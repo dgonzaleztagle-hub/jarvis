@@ -25,6 +25,7 @@ function createDesignModule(deps) {
   return {
     name: 'design',
     displayName: 'Diseño',
+    specialistName: 'Alex', // el "departamento" tiene cara: Alex, director creativo
     expertise: EXPERTISE,
     isRelevant,
     tools: [createPreviewTool(deps)]

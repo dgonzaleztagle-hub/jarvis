@@ -442,6 +442,13 @@ function createRuntime(options = {}) {
   // registran más abajo junto al resto.
   const brandTools = createBrandProfileTools({ dataDir });
 
+  // Módulo DISEÑO (especialista "Alex"). Se crea una vez: se pasa al
+  // conversationRuntime para el context-swap por dominio y se registran sus tools.
+  const designModule = createDesignModule({
+    modelProvider, dataDir, eventBus, brandTools,
+    generateWithContinuation, contentHonestyClause: CONTENT_HONESTY_CLAUSE
+  });
+
   const contextAssembler = new ContextAssembler({
     memoryStore,
     workingMemoryStore,
@@ -468,7 +475,8 @@ function createRuntime(options = {}) {
     knowledgeGraph,
     getActiveModel,
     persona,
-    historyStore
+    historyStore,
+    modules: [designModule]
   });
   toolRegistry.register({
     name: 'conversation.recall',
@@ -609,10 +617,7 @@ function createRuntime(options = {}) {
   });
 
   // Módulo DISEÑO (primer módulo-agente): registra sus tools. Ver src/modules/design/.
-  for (const tool of createDesignModule({
-    modelProvider, dataDir, eventBus, brandTools,
-    generateWithContinuation, contentHonestyClause: CONTENT_HONESTY_CLAUSE
-  }).tools) {
+  for (const tool of designModule.tools) {
     toolRegistry.register(tool);
   }
 

@@ -13,8 +13,12 @@ const { buildModelFailureMessage, coercePlainModelText } = require("./model-resp
 
 
 class ConversationRuntime {
-  constructor({ eventBus, taskRuntime, toolRegistry, modelProvider, presenterRegistry, memoryStore, workingMemoryStore, contextAssembler, knowledgeGraph, getActiveModel, persona, historyStore }) {
+  constructor({ eventBus, taskRuntime, toolRegistry, modelProvider, presenterRegistry, memoryStore, workingMemoryStore, contextAssembler, knowledgeGraph, getActiveModel, persona, historyStore, modules }) {
     this.eventBus = eventBus;
+    // Módulos-especialistas built-in (Diseño/Alex, etc.). Su `expertise` se
+    // inyecta como contexto del turno cuando el pedido entra en su dominio
+    // (context-swap inline, sin sub-loop). Jarvis sigue siendo la única puerta.
+    this.modules = Array.isArray(modules) ? modules : [];
     this.taskRuntime = taskRuntime;
     this.toolRegistry = toolRegistry;
     this.modelProvider = modelProvider;
@@ -39,6 +43,27 @@ class ConversationRuntime {
     // Lecciones de comportamiento que estuvieron en juego el turno anterior.
     // Se evalúan contra la reacción del usuario en el turno siguiente (refuerzo).
     this._lessonsInPlay = [];
+  }
+
+  // Si el pedido entra en el dominio de un módulo, arma el contexto del
+  // especialista (su cerebro/expertise) para inyectarlo en el turno. Context-swap
+  // inline: NO abre un sub-loop ni otro chat; Jarvis sigue orquestando y responde.
+  buildSpecialistContext(text) {
+    for (const m of this.modules) {
+      try {
+        if (m && typeof m.isRelevant === 'function' && m.isRelevant({ userText: text })) {
+          const domain = m.displayName || m.name;
+          const who = m.specialistName ? `${m.specialistName} (${domain})` : domain;
+          return [
+            `[Especialista del turno: ${who}]`,
+            `Este pedido entra en el dominio ${domain}. Trabajas junto a ${m.specialistName || 'tu especialista'}, que es parte de Jarvis (no un chat aparte): adopta su criterio para este turno.`,
+            m.expertise || '',
+            `Anúncialo con naturalidad ("esto se lo paso a ${m.specialistName || 'nuestro especialista'}") y al terminar presenta el resultado. Sigues siendo tú quien orquesta y responde.`
+          ].filter(Boolean).join('\n');
+        }
+      } catch (_) { /* un módulo nunca debe romper el turno */ }
+    }
+    return '';
   }
 
   // Registra un turno completo (usuario + resumen del modelo) en memoria y en
@@ -413,10 +438,14 @@ class ConversationRuntime {
     // ventana de 6 turnos en memoria. Viaja aquí, no en el system (cacheable).
     const summaryContext = this._cachedSummary || '';
 
+    // Especialista de turno: si el pedido entra en el dominio de un módulo
+    // (ej: Diseño → Alex), se inyecta su cerebro como contexto del turno.
+    const specialistContext = this.buildSpecialistContext(text);
+
     // El contexto dinámico viaja en el mensaje actual, no en el system ni en el
     // historial: el system queda estable (cacheable) y el historial guarda el
     // texto crudo del usuario sin arrastrar contextos viejos turno tras turno.
-    const dynamicContext = [summaryContext, memoryContext, workingContext, pendingContext, pendingIntentContext].filter(Boolean).join('\n\n');
+    const dynamicContext = [summaryContext, memoryContext, workingContext, pendingContext, pendingIntentContext, specialistContext].filter(Boolean).join('\n\n');
     const currentUserText = dynamicContext ? `${dynamicContext}\n\n[Mensaje del usuario]\n${text}` : text;
 
     const messages = [
