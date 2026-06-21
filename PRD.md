@@ -79,6 +79,7 @@ Detalle operativo por vertical (necesidades, fuentes preferidas, riesgos) en [do
 | **Publicación redes sociales** ✅ | `social.*` — Hub multi-plataforma: Meta (FB+IG), TikTok, LinkedIn, YouTube. JIT onboarding por plataforma. Post inmediato y programado. |
 | **Pipeline de video** ✅ | `video.*` — capa base (ffmpeg: corte silencios, info, subtítulos, voiceover mixer; Gemini STT; Pexels stock footage); capa break-glass (Remotion: 16 plantillas con spring physics — KineticText, DataViz, Testimonial, CodeExplainer, MarketingReel compositor, etc.). `video.compose` orquesta el pipeline completo. |
 | **Memoria externa** ✅ | `memory.*` — Google Sheet en Drive del usuario como respaldo remoto. Tabs: Proyectos, Contactos, Decisiones, Corridas. Append-safe, editable manualmente. |
+| **Módulos-agente (Diseño/Marketing)** ✅ | Departamentos built-in con cara propia, distintos de los agentes `agents.create` del usuario (esos son cron jobs). **Alex** (Diseño): `preview.render_html` (landings premium, sistema de variabilidad anti-plantilla por nicho, Tailwind+fuentes offline, QA gate, memoria de variaciones), `design.analyze_reference` (screenshot real vía Playwright + visión del modelo: layout bento/grid, simetría, jerarquía), `design.find_photos` (fotografía real gratuita vía Pexels). **Mara** (Marketing): dueña de `social.*`. Context-swap inline (sin sub-loop) por dominio del turno; HUD muestra quién está trabajando. Ver detalle en sección 4c. |
 
 ### P1 — Pendiente
 
@@ -106,6 +107,21 @@ Detalle operativo por vertical (necesidades, fuentes preferidas, riesgos) en [do
 - **Control total del escritorio (computer-use, opt-in)** — capa de automatización visual (screenshot + click/teclado) como techo final de capacidad: lanzar cualquier app, jugar, manejar cualquier ventana o sitio sin API. Por su alcance (ve y controla todo lo que hay en pantalla) debe ser un modo explícito que el usuario activa a conciencia, no la vía por defecto. Capa previa más liviana y de menor riesgo: extensión de navegador propia (`browser.list_tabs` / `browser.focus_tab`) para el caso común de "enfoca la pestaña donde tengo X abierto" sin necesitar visión de pantalla completa.
   - **Primer escalón ya implementado** (Fase E de la fusión, `src/connectors/desktop-control.js`): control de escritorio LOCAL a nivel ventana — `desktop.list_windows`, `desktop.focus_window` ("enfoca la ventana donde tengo X"), `desktop.open_app`, `desktop.open_url`. Windows-first vía PowerShell+C# inline (sin DLL), gobernado (riesgo alto → confirmación + audit). Requiere daemon en sesión interactiva. Nivel pestaña-dentro-de-navegador y máquinas remotas (sidecar) quedan como pasos siguientes. Ver [docs/FUSION_KNOWLEDGE_MERGE.md](../docs/FUSION_KNOWLEDGE_MERGE.md).
 
+### Módulos-Agente (Departamentos especializados) — v1 IMPLEMENTADA
+
+Jarvis tiene módulos built-in/fijos (un "departamento" por dominio) en `src/modules/<dominio>/`, **distintos** de los agentes que el usuario crea con `agents.create` (esos son cron-jobs con misión, ver sección siguiente). Cada módulo tiene su propio cerebro (`expertise`), su conocimiento y su grupo de tools. Jarvis sigue siendo la única puerta y orquesta; los módulos son especialistas detrás — el usuario nunca habla directo con Alex/Mara, habla con Jarvis y Jarvis delega.
+
+**Mecanismo (inline context-swap, sin sub-loop):** `ConversationRuntime.activeModuleFor(userText)` detecta el dominio del turno; si matchea, inyecta el `expertise` del especialista en el `dynamicContext` (cacheable) del mismo turno — no hay una llamada extra al modelo (disciplina de costo Haiku). Jarvis anuncia y delega ("esto se lo paso a Alex") y presenta el resultado. El HUD muestra un chip "Alex/Mara · Dominio · trabajando…" (`public/modules/specialist-indicator.js`, vía evento `specialist_active`) mientras corre la tarea.
+
+**Alex — Diseño** (`src/modules/design/`):
+- `preview.render_html` — landings premium single-file: motor de variabilidad anti-plantilla por nicho (layout/tipografía/motion/color sesgados SERIOUS vs CREATIVE), 36 conceptos de contenido por nicho (destilado de IP propia de HojaCero, sin Supabase en runtime), Tailwind + Google Fonts locales (offline), QA gate estático, memoria de variaciones por cliente
+- `design.analyze_reference` — renderiza una URL real con Playwright (Chromium headless) y analiza el screenshot con visión del modelo: layout bento/grid/asimétrico, simetría, jerarquía, ubicación de imágenes, tipografía, paleta. Resuelve que `web.fetch`/`web.search` solo traen texto, no patrones visuales
+- `design.find_photos` — fotografía real y gratuita vía Pexels (Jarvis no genera imágenes); evita landings con huecos o placeholders que aparentan ser fotos
+
+**Mara — Marketing** (`src/modules/marketing/`): dueña del grupo `social.*` (publicación multi-plataforma); la marca activa (`brand.*`) es compartida con Diseño.
+
+**Framework validado con 2 instancias reales** antes de generalizar (regla de diseño: construir un módulo vertical, acertar el borde, recién generalizar). Pendiente: extraer un `_framework.js` común si aparece un 3er módulo (candidato evaluado: SEO/AEO/GEO — auditoría técnica + optimización para motores de respuesta de IA, no solo buscadores); avatar animado del especialista en el HUD (teatro, baja prioridad).
+
 ### Agentes Automáticos — v1 IMPLEMENTADA (adelantada de roadmap)
 
 Jarvis crea agentes recurrentes conversando con el usuario. No genera código: genera **recetas declarativas** validadas.
@@ -118,8 +134,6 @@ Jarvis crea agentes recurrentes conversando con el usuario. No genera código: g
 - Panel HUD de agentes vivos: estado, agenda, última corrida, pausar/ejecutar — se abre al arrancar si hay agentes
 
 **Pendiente de la plataforma de agentes:**
-- Notificación de corridas programadas (voz HUD + Telegram) — hoy el resultado queda en disco/evento
-- Presupuesto en dólares por agente (hoy solo corridas/día) usando usage-meter por agentId
 - Namespace de memoria por agente (un agente-tutor no debe contaminar la memoria principal)
 - Guardrail anti-injection: agente desatendido que procesa contenido externo (web.fetch) no ejecuta tools de escritura de alto riesgo — deja aprobación pendiente
 - Escalera de autonomía: L1 usuario pide (hoy) → L2 Jarvis propone desde patrones observados → L3 crea solo con presupuesto → L4 (agentes creando agentes) BLOQUEADO por diseño
@@ -514,7 +528,7 @@ gobernanza visible del PRD §2. Pendiente: aprendizaje de auto-aprobación por r
 **Gobernanza de costos (BYOK + agentes = riesgo de boleta sorpresa):**
 - Medición por propósito y modelo: implementada (usage-meter)
 - Tope diario configurable de gasto total: PENDIENTE
-- Tope en dólares por agente con corte automático: PENDIENTE (hoy solo corridas/día)
+- Tope en dólares por agente con corte automático: ✅ implementado (`maxCostPerDayUsd` opcional en `agents.create`, corte automático al cruzar el tope — ver Fase 4)
 - Alerta visible en HUD al cruzar umbral: PENDIENTE
 - Disclaimer de gasto BYOK en onboarding + límites duros por defecto: el disclaimer solo no defiende; el corte automático sí
 
@@ -688,6 +702,13 @@ Formato no es decoración — es parte del contrato de cada respuesta. Reglas ap
 - [x] **Social Media hub** — `social.*`, Meta (FB+IG) + TikTok + LinkedIn + YouTube, JIT onboarding, posts inmediatos y programados
 - [x] **Pipeline de video** — `video.*`, 11 tools: ffmpeg (silencios, info, subtítulos, voiceover mixer), Gemini STT, Pexels footage, Remotion break-glass (16 plantillas con spring physics: KineticText word-stagger, DataViz bar chart, Testimonial type-on, CodeExplainer terminal, MarketingReel compositor multi-escena, etc.), `video.compose` orquesta todo
 - [x] **Memoria externa** — `memory.*`, Google Sheet en Drive del usuario (Proyectos/Contactos/Decisiones/Corridas), append-safe
+
+### Fase 4c — Módulos-Agente (Departamentos especializados) ✅
+- [x] Framework de módulos built-in (`src/modules/<dominio>/`): context-swap inline por dominio del turno, sin sub-loop; HUD muestra quién está trabajando
+- [x] **Alex (Diseño)**: `preview.render_html`, `design.analyze_reference` (Playwright + visión), `design.find_photos` (Pexels)
+- [x] **Mara (Marketing)**: dueña de `social.*`
+- [ ] Tercer módulo (candidato: SEO/AEO/GEO — auditoría técnica + optimización para motores de respuesta de IA) — recién ahí se justifica extraer un `_framework.js` común
+- [ ] Avatar animado del especialista en el HUD (teatro, baja prioridad)
 
 ### Fase 5 — Investigación y Reportes
 - Web research con fuentes verificadas
