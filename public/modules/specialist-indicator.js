@@ -24,7 +24,7 @@ function ensureChip() {
   chip = document.createElement('div');
   chip.id = 'specialistChip';
   chip.style.cssText = [
-    'position:fixed', 'top:14px', 'left:50%', 'transform:translateX(-50%)',
+    'position:fixed', 'top:68px', 'left:20px',
     'z-index:9000', 'display:none', 'align-items:center', 'gap:10px',
     'padding:7px 14px 7px 10px', 'border-radius:999px',
     'background:rgba(8,16,24,0.82)', 'backdrop-filter:blur(6px)',
