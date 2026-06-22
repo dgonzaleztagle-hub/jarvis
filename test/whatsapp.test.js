@@ -139,6 +139,30 @@ test('resolveRecipient self: normaliza el jid propio (sin sufijo de dispositivo)
   }
 });
 
+test('resolveRecipient: el nombre del dueño del sistema resuelve a self, no a busqueda de contacto', async () => {
+  const os = require('os');
+  const path = require('path');
+  const fs = require('fs');
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-test-'));
+  const channel = new WhatsAppChannel({ dataDir, eventBus: { emit() {} }, ownerName: 'Daniel González Tagle' });
+  channel.sock = { user: { id: '56988888805:25@s.whatsapp.net' } };
+
+  // Una corrida de agente desatendida que escribe el nombre real del dueño
+  // (en vez de "self"/"yo") no debe caer al lookup de libreta y fallar con
+  // WHATSAPP_RECIPIENT_NOT_FOUND — el dueño no es un contacto suyo propio.
+  for (const alias of ['Daniel', 'daniel', 'Daniel González Tagle']) {
+    const res = await channel.resolveRecipient(alias);
+    assert.ok(res?.jid, `"${alias}" debe resolver al jid propio del dueño`);
+    assert.equal(res.jid, '56988888805@s.whatsapp.net');
+  }
+
+  // Sin ownerName configurado (default), no debe inventar ningun self-match.
+  const noOwner = new WhatsAppChannel({ dataDir, eventBus: { emit() {} } });
+  noOwner.sock = { user: { id: '56988888805:25@s.whatsapp.net' } };
+  const res = await noOwner.resolveRecipient('Daniel');
+  assert.equal(res, null);
+});
+
 test('extractText: cubre tipos de mensaje comunes', () => {
   assert.equal(extractText({ conversation: 'hola' }), 'hola');
   assert.equal(extractText({ extendedTextMessage: { text: 'link' } }), 'link');

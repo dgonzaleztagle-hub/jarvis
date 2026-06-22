@@ -80,6 +80,14 @@ TÉCNICA: usa Tailwind (clases de utilidad) para el layout y el grueso del estil
 
       if (!html.trim()) return { ok: false, error: 'BRIEF_OR_HTML_REQUIRED' };
 
+      // El modelo a veces ignora la instrucción de no agregar CDN de Tailwind ni
+      // Google Fonts (ya están inyectados/cargados localmente) — no es confiable
+      // dejarlo solo a la instrucción: esto rompe el offline-first del white-label
+      // (sale a internet a buscar algo que ya tenemos local) sin que el gate de QA
+      // lo detecte (solo mira si HAY clases Tailwind, no si hay dependencias
+      // externas de más). Limpieza determinística, no negociable con el modelo.
+      html = stripExternalDependencies(html);
+
       // Gate de QA estático (sin browser). Si hay CRÍTICAS y vino de un brief,
       // UNA pasada de reparación dirigida antes de mostrarla.
       let qa = auditLanding(html);
@@ -110,6 +118,15 @@ TÉCNICA: usa Tailwind (clases de utilidad) para el layout y el grueso del estil
       return { ok: true, ...payload, bytes: html.length, qa: { score: qa.score, summary: qa.summary, issues: qa.issues } };
     }
   };
+}
+
+function stripExternalDependencies(doc) {
+  return doc
+    // CDN de Tailwind (variantes comunes: cdn.tailwindcss.com, unpkg, jsdelivr)
+    .replace(/<script[^>]+src=["'][^"']*(?:cdn\.tailwindcss\.com|unpkg\.com\/tailwindcss|jsdelivr\.net\/npm\/tailwindcss)[^"']*["'][^>]*>\s*<\/script>/gi, '')
+    // Google Fonts vía <link> o @import — las fuentes ya están en /public/vendor/fonts.css
+    .replace(/<link[^>]+href=["'][^"']*fonts\.(?:googleapis|gstatic)\.com[^"']*["'][^>]*>/gi, '')
+    .replace(/@import\s+url\(['"]?[^'")]*fonts\.googleapis\.com[^'")]*['"]?\)\s*;?/gi, '');
 }
 
 function injectAssets(doc) {

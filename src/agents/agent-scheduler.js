@@ -12,12 +12,13 @@ function localHHMM(now) {
 }
 
 class AgentScheduler {
-  constructor({ store, conversationRuntime, eventBus, usageMeter, budgetConfig, intervalMs = 60_000 }) {
+  constructor({ store, conversationRuntime, eventBus, usageMeter, budgetConfig, auditTrail, intervalMs = 60_000 }) {
     this.store = store;
     this.conversationRuntime = conversationRuntime;
     this.eventBus = eventBus;
     this.usageMeter = usageMeter || null;
     this.budgetConfig = budgetConfig || null;
+    this.auditTrail = auditTrail || null;
     this.intervalMs = intervalMs;
     this.timer = null;
     this.running = new Set();
@@ -127,23 +128,36 @@ class AgentScheduler {
       // El encuadre es crítico: un goal redactado como misión recurrente
       // ("revisar todos los días...") se leería como orden de PROGRAMAR un
       // agente nuevo — recursión. Acá se ejecuta UNA pasada, ahora.
+      const runStartedIso = now.toISOString();
       const task = await this.conversationRuntime.handleMessage({
-        text: `[Corrida automática del agente "${agent.name}". Esta es UNA ejecución de su misión: hazla AHORA con las herramientas disponibles y reporta el resultado. La recurrencia ya está programada — no crees, modifiques ni programes agentes.] Misión: ${agent.goal}`,
+        text: `[Corrida automática del agente "${agent.name}". Esta es UNA ejecución de su misión: hazla AHORA con las herramientas disponibles y reporta el resultado. La recurrencia ya está programada — no crees, modifiques ni programes agentes. Si decides notificar al dueño del sistema (por WhatsApp/Telegram/etc), dirígelo a "self"/"yo" — NUNCA a su nombre propio, no es un contacto suyo guardado.] Misión: ${agent.goal}`,
         channel: 'agent',
         // Namespace de memoria: lo que esta corrida aprenda queda taggeado con
         // este agentId, no contamina la memoria principal ni la de otros
         // agentes — ver knowledge-graph.js _visible().
         context: { agentId: agent.id }
       });
+
+      // Una corrida desatendida que dejó una tool en confirmation_required NO
+      // "terminó" de verdad — quedó esperando un sí que nadie le va a dar (no
+      // hay un humano mirando). Sin esto, la notificación pega "terminó su
+      // corrida" + el speak de esa confirmación pendiente, armando un mensaje
+      // sin sentido (lo vimos real: agente de WhatsApp -> mensaje garabateado).
+      const pendingConfirm = this.auditTrail?.query({ outcome: 'confirmation_required', since: runStartedIso, limit: 5 }) || [];
+
       const result = {
-        status: task.status,
+        status: pendingConfirm.length > 0 ? 'needs_approval' : task.status,
         speak: task.result?.speak || '',
+        pendingTools: pendingConfirm.length > 0 ? [...new Set(pendingConfirm.map((e) => e.tool))] : undefined,
         at: now.toISOString(),
         trigger
       };
       this.recordRunCost(agent, costBefore, now);
       this.store.update(agent.id, { lastResult: result });
-      this.eventBus?.emit('agent_run_completed', { agentId: agent.id, name: agent.name, ...result });
+      this.eventBus?.emit(
+        pendingConfirm.length > 0 ? 'agent_run_needs_approval' : 'agent_run_completed',
+        { agentId: agent.id, name: agent.name, ...result }
+      );
       return result;
     } catch (error) {
       this.recordRunCost(agent, costBefore, now);

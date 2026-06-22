@@ -53,11 +53,19 @@ function stripDeviceSuffix(jid) {
 }
 
 class WhatsAppChannel {
-  constructor({ dataDir, eventBus, contactResolver } = {}) {
+  constructor({ dataDir, eventBus, contactResolver, ownerName } = {}) {
     this.authDir = path.join(dataDir, 'whatsapp', 'auth');
     this.inboxDir = path.join(dataDir, 'inbox');
     this.eventBus = eventBus;
     this.contactResolver = contactResolver || (async () => null);
+    // El dueño del sistema no es un "contacto" suyo propio — una corrida de
+    // agente desatendida que decide notificarlo por WhatsApp a veces escribe
+    // su nombre real en vez de "self"/"yo" (no tiene el mismo pie del usuario
+    // pidiéndolo en vivo). Sin esto, "Daniel" cae al lookup de libreta y falla
+    // con WHATSAPP_RECIPIENT_NOT_FOUND en vez de mandarse a sí mismo.
+    this.ownerNames = String(ownerName || '').trim()
+      ? [...new Set([String(ownerName).trim().toLowerCase(), String(ownerName).trim().split(/\s+/)[0].toLowerCase()])]
+      : [];
     this.sock = null;
     this.connected = false;
     this.starting = false;
@@ -299,7 +307,7 @@ class WhatsAppChannel {
 
     // 0. Auto-referencial: el usuario pide enviarse algo a sí mismo.
     // Baileys expone el JID de la cuenta vinculada en this.sock.user.id.
-    if (['self', 'yo', 'mi numero', 'mi número', 'a mi', 'a mí', 'mismo', 'a mi mismo', 'a mí mismo'].includes(needle)) {
+    if (['self', 'yo', 'mi numero', 'mi número', 'a mi', 'a mí', 'mismo', 'a mi mismo', 'a mí mismo'].includes(needle) || this.ownerNames.includes(needle)) {
       // sock.user.id trae el sufijo de dispositivo (":25@...") que rompe la
       // entrega: hay que normalizarlo al JID del número limpio.
       const ownJid = stripDeviceSuffix(this.sock?.user?.id);

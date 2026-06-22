@@ -8,6 +8,7 @@ const { AgentStore } = require('../src/agents/agent-store');
 const { AgentScheduler } = require('../src/agents/agent-scheduler');
 const { UsageMeter } = require('../src/model/usage-meter');
 const { BudgetConfig } = require('../src/agents/budget-config');
+const { AuditTrail } = require('../src/security/audit-trail');
 
 function fakeEventBus() {
   const events = [];
@@ -170,6 +171,36 @@ test('agent_budget_warning se emite al 80% del tope por-agente, una sola vez por
   } finally {
     mock.timers.reset();
   }
+});
+
+test('runAgent reporta needs_approval (no completed) si la corrida dejo una tool en confirmation_required', async () => {
+  const dataDir = tempDataDir();
+  const usageMeter = new UsageMeter({ dataDir });
+  const store = new AgentStore({ dataDir });
+  const auditTrail = new AuditTrail({ dataDir });
+  const bus = fakeEventBus();
+
+  // Runtime falso: simula que el modelo intento wa.send_message y quedo en
+  // confirmation_required (igual que el caso real: agente desatendido sin
+  // nadie para confirmar). El audit real queda escrito, como en produccion.
+  const runtime = {
+    handleMessage: async () => {
+      auditTrail.record({ tool: 'wa.send_message', risk: 'high', outcome: 'confirmation_required', channel: 'agent' });
+      return { status: 'completed', result: { speak: 'Necesito tu confirmación antes de ejecutar esta acción.' } };
+    }
+  };
+  const scheduler = new AgentScheduler({ store, conversationRuntime: runtime, eventBus: bus, usageMeter, auditTrail });
+
+  const agent = store.create({ name: 'Agente con confirmacion pendiente', goal: 'avisar por whatsapp', schedule: { type: 'manual' } });
+  const result = await scheduler.runAgent(agent.id, { trigger: 'validation' });
+
+  assert.equal(result.status, 'needs_approval');
+  assert.deepEqual(result.pendingTools, ['wa.send_message']);
+
+  const approvalEvents = bus.events.filter((e) => e.type === 'agent_run_needs_approval');
+  assert.equal(approvalEvents.length, 1, 'debe emitir agent_run_needs_approval, no agent_run_completed');
+  const completedEvents = bus.events.filter((e) => e.type === 'agent_run_completed');
+  assert.equal(completedEvents.length, 0, 'NO debe reportarse como completada — nadie confirmo nada');
 });
 
 test('agent_budget_warning global se emite al 80% del tope global', async () => {

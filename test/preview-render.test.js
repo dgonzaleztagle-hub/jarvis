@@ -38,6 +38,31 @@ test('preview.render_html materializa el HTML y emite evento para el HUD', async
   assert.equal(emitted.url, res.url);
 });
 
+test('preview.render_html borra CDN de Tailwind y Google Fonts si el modelo los agrega de mas', async () => {
+  const dataDir = tempDataDir();
+  const runtime = createRuntime({ dataDir, agents: { autoStart: false } });
+  const tool = runtime.toolRegistry.get('preview.render_html');
+
+  const dirtyHtml = `<!doctype html><html><head>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter" rel="stylesheet">
+    <style>@import url('https://fonts.googleapis.com/css2?family=Playfair+Display');</style>
+  </head><body><h1>Clinica</h1></body></html>`;
+
+  const res = await tool.execute({ html: dirtyHtml, title: 'Demo' });
+  assert.equal(res.ok, true);
+  const onDisk = fs.readFileSync(path.join(dataDir, 'previews', res.url.replace('/preview/', '')), 'utf-8');
+
+  // Las dependencias externas (rompen el offline-first del white-label) deben
+  // desaparecer, sin importar si el modelo las agrego pese a la instruccion.
+  assert.doesNotMatch(onDisk, /cdn\.tailwindcss\.com/);
+  assert.doesNotMatch(onDisk, /fonts\.googleapis\.com/);
+  // El runtime local SI debe seguir presente.
+  assert.match(onDisk, /vendor\/tailwind\.js/);
+  assert.match(onDisk, /vendor\/fonts\.css/);
+  assert.match(onDisk, /<h1>Clinica<\/h1>/);
+});
+
 test('preview.render_html rechaza sin html ni brief', async () => {
   const runtime = createRuntime({ dataDir: tempDataDir(), agents: { autoStart: false } });
   const res = await runtime.toolRegistry.get('preview.render_html').execute({ html: '   ' });
