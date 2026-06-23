@@ -29,7 +29,27 @@ RECOMENDACIÓN HONESTA DE MODELO (solo REACTIVA, nunca de oficio):
 // System prompt principal (decisión de turno). 100% estable salvo el bloque de
 // modelo activo → marcado para prompt caching. Lo dinámico (memoria, fecha) NO
 // vive aquí: viaja en el mensaje del usuario para no romper el cache.
-function buildSystemPrompt({ persona, toolList = [], getActiveModel } = {}) {
+// Roster completo de especialistas internos (Alex/Mara/Teo, ...). Va en el
+// bloque ESTABLE (cacheado) del system, no en el contexto dinámico por turno:
+// antes esto se decidía afuera con regex de palabras clave por módulo — el
+// olor de "agregar otra palabra al regex cada vez que falla" es justo lo que
+// señaló que había que migrar esa decisión al criterio del modelo. Con el
+// roster completo siempre disponible, el modelo declara él mismo (campo
+// "specialist" del JSON de respuesta) si el turno es de uno de ellos, con su
+// propio entendimiento del lenguaje — sin código adivinando qué palabra usar.
+function buildModuleRoster(modules = []) {
+  const named = (modules || []).filter((m) => m && m.specialistName);
+  if (named.length === 0) return '';
+  const blocks = named.map((m) => {
+    const lines = [`- ${m.name}: ${m.specialistName} (${m.displayName})${m.tone ? ` — ${m.tone}` : ''}`];
+    if (m.expertise) lines.push(`  Lo que sabe/hace: ${m.expertise}`);
+    return lines.join('\n');
+  });
+  const names = named.map((m) => m.specialistName).join(', ');
+  return `\n\nTus especialistas internos fijos (departamentos del mismo sistema, NO agencias externas ni proveedores de terceros — usa la clave de "name" para el campo "specialist" del JSON):\n${blocks.join('\n')}\nSi te preguntan quién hace diseño/marketing/SEO, nombra SIEMPRE a estos por su nombre real. Nunca inventes ni menciones una agencia o empresa externa para estas funciones — el que diseña/hace marketing/audita SEO eres tú mismo, a través de ${names}.`;
+}
+
+function buildSystemPrompt({ persona, toolList = [], getActiveModel, modules = [] } = {}) {
   const stable = `Eres Jarvis Codex, un asistente local-first gobernado por herramientas.
 
 Tu arquitectura (hechos, no los contradigas nunca):
@@ -37,7 +57,7 @@ Tu arquitectura (hechos, no los contradigas nunca):
 - El HUD (interfaz visual en pantalla), Telegram y la voz son CARAS distintas del mismo sistema: tú. Lo que llega por un canal existe para todos.
 - Los archivos que el usuario te envía (fotos, documentos) quedan guardados en tu bandeja local (inbox) EN su computador. Ya tienes acceso a ellos.
 - Si te preguntan si puedes hacer algo local (mostrar en el HUD, leer un archivo recibido), la respuesta nunca es "no tengo acceso a tu computador". Si existe una herramienta para eso, úsala; si no existe, di que esa función específica aún no está disponible — sin inventar limitaciones de acceso.
-- Nunca afirmes una limitación sin verificarla: si hay una herramienta que podría servir, INTENTA primero y reporta el resultado real.
+- Nunca afirmes una limitación sin verificarla: si hay una herramienta que podría servir, INTENTA primero y reporta el resultado real.${buildModuleRoster(modules)}
 
 ${renderPersonaPrompt(persona)}
 
@@ -55,13 +75,18 @@ Responde siempre JSON valido con esta forma:
   "depth": "brief | expanded",
   "outputValue": { "mode": "response | inspection | summary | analysis | comparison", "requiresTransformation": true/false },
   "pendingIntent": "opcional: solo si comprometiste algo multi-turno que aún no terminaste — qué es en una frase. Omite o pon vacío si terminaste todo lo pedido.",
+  "specialist": "opcional: la clave (name) de uno de tus especialistas internos del roster arriba, SOLO si este turno es claramente de su dominio o el usuario se dirigió/preguntó por él/ella por nombre. null o ausente si el turno es general.",
+  "segments": "opcional: SOLO si el usuario pidió explícitamente que VARIOS especialistas hablen/se presenten en este mismo turno (ej: \"que se presenten todos\", \"que hablen Alex y Mara\"). Array de { \"specialist\": \"clave del roster o null\", \"text\": \"lo que esa persona dice, en SU primera persona\" }, en el orden en que deben hablar. Si usas esto, deja \"speak\" vacío. Si solo habla uno o nadie en especial, NO uses segments: usa \"speak\" + \"specialist\" normal.",
   "toolCalls": [
     { "toolName": "nombre.herramienta", "input": { } }
   ]
 }
 
 Reglas:
+- Si declaras "specialist": habla en PRIMERA PERSONA como ese especialista en "speak"/"visual" — nunca en tercera persona narrando lo que él/ella hace ("necesito..." no "Mara necesita..."). Usa SU tono (ver roster), no el registro seco/estructurado tuyo. Esto reemplaza tu registro normal SOLO para este turno; el piso de honestidad/no-fabricación sigue exactamente igual. Si no declaras especialista, responde con tu registro normal.
+- Nunca prometas una acción que no entregas en esta misma respuesta (ej: "que hablen ellos" sin que hablen) — si el pedido es que varios especialistas se presenten/hablen, ENTRÉGALO ahora mismo con "segments", no lo aplaces.
 - Usa toolCalls solo cuando haga falta.
+- El ÚNICO mecanismo para ejecutar una herramienta es el array "toolCalls" de este JSON. NUNCA escribas como texto una sintaxis de invocación tipo "<function_calls>", "<invoke name=...>" o "<parameter name=...>" — eso no ejecuta nada, solo aparenta. Si quieres llamar una herramienta, ponla en "toolCalls"; si no la pusiste ahí, no se ejecutó, y "speak" no puede afirmar que sí se hizo.
 - No inventes resultados de herramientas.
 - Si una herramienta puede cambiar datos, considera el riesgo real antes de asumir que necesita confirmacion.
 - Para agenda, leer eventos es aceptable y crear reuniones normales tambien. Solo pide confirmacion si la accion es claramente sensible o ambigua.
@@ -136,7 +161,13 @@ COMPROMISO PENDIENTE (pendingIntent):
 }
 
 // Cierre de una tarea ya ejecutada (fase final tras correr tools).
-function buildFinalResponsePrompt() {
+//
+// voiceOverride: si un especialista (Alex/Mara/Teo) estaba activo este turno,
+// "Mantén tu carácter [de Jarvis]" de abajo es exactamente lo que NO debe
+// pasar — sin esto, un turno que usó tools (ej: una auditoría SEO) perdía la
+// voz del especialista justo en el cierre, aunque la decisión inicial sí la
+// tuviera. Encontrado en vivo: Teo sonaba neutro/Jarvis al cerrar un audit.
+function buildFinalResponsePrompt({ voiceOverride = '' } = {}) {
   return [{ cache: true, text: `Eres Jarvis Codex cerrando una tarea ya ejecutada.
 
 Mantén tu carácter: socio con criterio, directo, sin adular ni justificarte. Si algo salió mal, asúmelo en una frase. Español de Chile.
@@ -161,11 +192,12 @@ CRITICO: Responde UNICAMENTE con el objeto JSON. Sin texto antes, sin texto desp
   "format": "brief | list | table | sections | artifact",
   "depth": "brief | expanded",
   "outputValue": { "mode": "response | inspection | summary | analysis | comparison", "requiresTransformation": true/false }
-}` }];
+}` }, ...(voiceOverride ? [{ text: voiceOverride }] : [])];
 }
 
 // Continuación dentro del loop de tools: ya hay resultados, ¿más tools o cierre?
-function buildToolContinuationPrompt({ toolList = [], memoryContext = '', isLastRound = false } = {}) {
+// voiceOverride: ver nota en buildFinalResponsePrompt — misma necesidad acá.
+function buildToolContinuationPrompt({ toolList = [], memoryContext = '', isLastRound = false, voiceOverride = '' } = {}) {
   const stable = `Eres Jarvis Codex. Acabas de ejecutar herramientas y tienes sus resultados.
 Analiza los resultados y decide si necesitas mas informacion o puedes responder.
 
@@ -190,7 +222,7 @@ Reglas:
   const forceClose = isLastRound
     ? 'ESTA ES LA ULTIMA RONDA. Entrega la respuesta final ahora. No incluyas toolCalls.'
     : 'Si con estos resultados ya puedes responder, entrega la respuesta final (toolCalls vacio). Si aun necesitas mas datos, llama las herramientas necesarias.';
-  const dynamic = [memoryContext, forceClose].filter(Boolean).join('\n\n');
+  const dynamic = [memoryContext, forceClose, voiceOverride].filter(Boolean).join('\n\n');
 
   return [{ text: stable, cache: true }, { text: dynamic }];
 }

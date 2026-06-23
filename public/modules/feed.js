@@ -1,5 +1,5 @@
 import { state, dom, el } from './state.js';
-import { speakText } from './voice.js';
+import { speakText, speakSegments } from './voice.js';
 
 /* ─── HELPERS ───────────────────────────────────────────────────────────────── */
 export function looksStructured(text='') { return /\n[-*]\s|\n\d+\.\s|:\n/.test(String(text||'')); }
@@ -134,7 +134,11 @@ export function addMessage(kind, label, text, opts={}) {
     // Don't let secondary messages interrupt an ongoing primary speech.
     const isPrimary = 'speakText' in opts;
     if (!isPrimary && state.speaking) return;
-    speakText(opts.speakText||buildNarration(opts.voiceResult)||text);
+    if (opts.segments?.length) {
+      speakSegments(opts.segments);
+    } else {
+      speakText(opts.speakText||buildNarration(opts.voiceResult)||text, { voiceProfile: opts.voiceProfile });
+    }
   }
   return msg;
 }

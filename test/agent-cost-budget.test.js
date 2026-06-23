@@ -203,6 +203,136 @@ test('runAgent reporta needs_approval (no completed) si la corrida dejo una tool
   assert.equal(completedEvents.length, 0, 'NO debe reportarse como completada — nadie confirmo nada');
 });
 
+test('runAgent reporta needs_input (no completed) si el speak termina en pregunta sin tool de confirmacion de por medio', async () => {
+  const dataDir = tempDataDir();
+  const usageMeter = new UsageMeter({ dataDir });
+  const store = new AgentStore({ dataDir });
+  const bus = fakeEventBus();
+
+  // Caso real encontrado: el agente quedo "completed" pero el speak era una
+  // pregunta por un dato faltante (telefono) que nadie iba a contestar en una
+  // corrida desatendida — el panel lo mostraba como si nada hubiera pasado.
+  const runtime = {
+    handleMessage: async () => ({
+      status: 'completed',
+      result: { speak: 'No encontré tu número de WhatsApp guardado. ¿Me das tu teléfono?' }
+    })
+  };
+  const scheduler = new AgentScheduler({ store, conversationRuntime: runtime, eventBus: bus, usageMeter });
+
+  const agent = store.create({ name: 'Agente con pregunta pendiente', goal: 'avisar por whatsapp', schedule: { type: 'manual' } });
+  const result = await scheduler.runAgent(agent.id, { trigger: 'schedule' });
+
+  assert.equal(result.status, 'needs_input');
+  const inputEvents = bus.events.filter((e) => e.type === 'agent_run_needs_input');
+  assert.equal(inputEvents.length, 1, 'debe emitir agent_run_needs_input, no agent_run_completed');
+  const completedEvents = bus.events.filter((e) => e.type === 'agent_run_completed');
+  assert.equal(completedEvents.length, 0, 'NO debe reportarse como completada — quedo una pregunta sin responder');
+});
+
+test('runAgent: una respuesta a la pregunta pendiente se inyecta como contexto de esa corrida puntual', async () => {
+  const dataDir = tempDataDir();
+  const usageMeter = new UsageMeter({ dataDir });
+  const store = new AgentStore({ dataDir });
+  const bus = fakeEventBus();
+
+  let lastText = null;
+  const runtime = {
+    handleMessage: async ({ text }) => {
+      lastText = text;
+      return { status: 'completed', result: { speak: 'Listo, mensaje enviado.' } };
+    }
+  };
+  const scheduler = new AgentScheduler({ store, conversationRuntime: runtime, eventBus: bus, usageMeter });
+
+  const agent = store.create({ name: 'Agente respondido', goal: 'avisar por whatsapp', schedule: { type: 'manual' } });
+  store.update(agent.id, { lastResult: { status: 'needs_input', speak: '¿Me das tu teléfono?' } });
+
+  const result = await scheduler.runAgent(agent.id, { trigger: 'manual', answerToLastQuestion: '+56912345678' });
+
+  assert.equal(result.status, 'completed');
+  assert.match(lastText, /\+56912345678/);
+});
+
+test('runAgent marca deliveredViaOutbound cuando una tool outbound (ej wa.send_message) corrio completed en la corrida', async () => {
+  // Caso real: agente cuya mision es mandar un WhatsApp. Si ya entrego el
+  // mensaje por ese canal, una notificacion aparte por Telegram diciendo "tu
+  // agente corrio" es un segundo aviso del mismo hecho — ruido.
+  const dataDir = tempDataDir();
+  const usageMeter = new UsageMeter({ dataDir });
+  const store = new AgentStore({ dataDir });
+  const bus = fakeEventBus();
+  const fakeToolRegistry = {
+    get: (name) => (name === 'wa.send_message' ? { outbound: true } : { outbound: false })
+  };
+  const runtime = {
+    handleMessage: async () => ({
+      status: 'completed',
+      result: {
+        speak: 'Listo, mensaje enviado.',
+        toolResults: [{ toolName: 'wa.send_message', status: 'completed' }]
+      }
+    })
+  };
+  const scheduler = new AgentScheduler({ store, conversationRuntime: runtime, eventBus: bus, usageMeter, toolRegistry: fakeToolRegistry });
+
+  const agent = store.create({ name: 'Agente que ya avisa por wsp', goal: 'avisar por whatsapp', schedule: { type: 'manual' } });
+  const result = await scheduler.runAgent(agent.id, { trigger: 'schedule' });
+
+  assert.equal(result.deliveredViaOutbound, true);
+  const completedEvents = bus.events.filter((e) => e.type === 'agent_run_completed');
+  assert.equal(completedEvents[0].payload.deliveredViaOutbound, true);
+});
+
+test('runAgent NO marca deliveredViaOutbound si ninguna tool outbound corrio (ej: agente que solo leyo/analizo algo en silencio)', async () => {
+  const dataDir = tempDataDir();
+  const usageMeter = new UsageMeter({ dataDir });
+  const store = new AgentStore({ dataDir });
+  const bus = fakeEventBus();
+  const fakeToolRegistry = { get: () => ({ outbound: false }) };
+  const runtime = {
+    handleMessage: async () => ({
+      status: 'completed',
+      result: {
+        speak: 'Revisé tus correos, nada urgente.',
+        toolResults: [{ toolName: 'google.gmail.list_emails', status: 'completed' }]
+      }
+    })
+  };
+  const scheduler = new AgentScheduler({ store, conversationRuntime: runtime, eventBus: bus, usageMeter, toolRegistry: fakeToolRegistry });
+
+  const agent = store.create({ name: 'Agente silencioso', goal: 'revisar correos', schedule: { type: 'manual' } });
+  const result = await scheduler.runAgent(agent.id, { trigger: 'schedule' });
+
+  assert.equal(result.deliveredViaOutbound, false);
+});
+
+test('runAgent emite agent_run_started al arrancar, antes de que termine la corrida', async () => {
+  // El HUD necesita saber que el agente EMPEZÓ a trabajar en el momento real,
+  // no enterarse recién cuando termina (eso ya lo cubrían los eventos
+  // agent_run_completed/failed/needs_*) — para el pulso de "trabajando".
+  const dataDir = tempDataDir();
+  const usageMeter = new UsageMeter({ dataDir });
+  const store = new AgentStore({ dataDir });
+  const bus = fakeEventBus();
+  let sawStartedBeforeHandle = false;
+  const runtime = {
+    handleMessage: async () => {
+      sawStartedBeforeHandle = bus.events.some((e) => e.type === 'agent_run_started');
+      return { status: 'completed', result: { speak: 'listo' } };
+    }
+  };
+  const scheduler = new AgentScheduler({ store, conversationRuntime: runtime, eventBus: bus, usageMeter });
+
+  const agent = store.create({ name: 'Agente con started', goal: 'x', schedule: { type: 'manual' } });
+  await scheduler.runAgent(agent.id);
+
+  assert.equal(sawStartedBeforeHandle, true);
+  const started = bus.events.filter((e) => e.type === 'agent_run_started');
+  assert.equal(started.length, 1);
+  assert.equal(started[0].payload.agentId, agent.id);
+});
+
 test('agent_budget_warning global se emite al 80% del tope global', async () => {
   mock.timers.enable({ apis: ['Date'], now: new Date('2026-06-15T12:00:00-04:00').getTime() });
   try {

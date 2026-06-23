@@ -311,7 +311,24 @@ async function router(req, res) {
     }
 
     if (req.method === 'GET' && url.pathname === '/agents') {
-      return sendJson(res, 200, { agents: runtime.agentStore.list() });
+      // running: cubre el caso de recargar el HUD a mitad de una corrida — sin
+      // esto, el pulso de "trabajando" solo se prende vía el evento SSE
+      // agent_run_started, que un reload se pierde por completo.
+      const agents = runtime.agentStore.list().map((a) => ({ ...a, running: runtime.agentScheduler.running.has(a.id) }));
+      return sendJson(res, 200, { agents });
+    }
+
+    // Especialistas built-in (Alex/Mara/Teo) — distintos de los agentes que
+    // crea el usuario con agents.create: son fijos, no se crean ni se borran.
+    // El HUD los lista en su propio panel para no confundirlos con /agents.
+    if (req.method === 'GET' && url.pathname === '/specialists') {
+      const specialists = (runtime.conversationRuntime.modules || []).map((m) => ({
+        name: m.name,
+        displayName: m.displayName,
+        specialistName: m.specialistName,
+        voiceProfile: m.voiceProfile || null
+      }));
+      return sendJson(res, 200, { specialists });
     }
 
     if (req.method === 'GET' && url.pathname === '/agents/notifications') {
@@ -339,6 +356,18 @@ async function router(req, res) {
       const body = await readJson(req);
       try {
         const result = await runtime.agentScheduler.runAgent(String(body.agent || ''), { trigger: 'manual' });
+        return sendJson(res, 200, { result });
+      } catch (error) {
+        return sendJson(res, 400, { error: error.message });
+      }
+    }
+
+    if (req.method === 'POST' && url.pathname === '/agents/answer') {
+      const body = await readJson(req);
+      const answer = String(body.answer || '').trim();
+      if (!answer) return sendJson(res, 400, { error: 'ANSWER_REQUIRED' });
+      try {
+        const result = await runtime.agentScheduler.runAgent(String(body.agent || ''), { trigger: 'manual', answerToLastQuestion: answer });
         return sendJson(res, 200, { result });
       } catch (error) {
         return sendJson(res, 400, { error: error.message });

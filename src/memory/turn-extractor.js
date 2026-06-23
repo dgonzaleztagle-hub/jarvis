@@ -101,7 +101,23 @@ async function extractBoth({ userText, assistantText, modelProvider, memoryStore
 // Las dos persistencias se aíslan entre sí (un fallo no mata al otro), igual que
 // cuando eran dos pasos separados. Nunca propaga: el aprendizaje en background
 // jamás debe romper el camino en vivo.
+// agents.create/update/delete ya tienen una fuente de verdad VIVA (el agent
+// store, consultable via agents.list/agents.get) — fosilizar su config como
+// "hecho" de memoria/grafo crea una segunda fuente que se desincroniza apenas
+// el agente se borra o cambia: el dato viejo queda dando vueltas para siempre
+// y el modelo lo recita como si aún existiera, aunque la tool diga lo
+// contrario en el mismo turno. Se ataja en el origen: un turno que tocó el
+// ciclo de vida de un agente nunca aprende memoria/grafo sobre ESE turno.
+const AGENT_LIFECYCLE_TOOL = /^agents\.(create|update|delete)$/;
+function touchedAgentLifecycle(toolResults = []) {
+  return toolResults.some((r) => AGENT_LIFECYCLE_TOOL.test(r?.toolName || '') && r?.status === 'completed');
+}
+
 async function extractTurnKnowledge({ userText, assistantResult, toolResults, modelProvider, memoryStore, knowledgeGraph, recentHistory = '', agentId = null }) {
+  if (touchedAgentLifecycle(toolResults)) {
+    return { stored: [], graphResult: { entities: 0, facts: 0, relationships: 0, commitments: 0 }, unified: false };
+  }
+
   const assistantText = assistantResult?.speak || assistantResult?.visual || '';
 
   let extracted = null;

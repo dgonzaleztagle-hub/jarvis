@@ -2,7 +2,6 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { auditAeo } = require('../src/modules/seo/aeo-audit-tool');
 const { createReportTool } = require('../src/modules/seo/report-tool');
-const { isRelevant } = require('../src/modules/seo/index');
 
 function withMockFetch(handler, fn) {
   const original = global.fetch;
@@ -70,10 +69,4 @@ test('seo.generate_report compone narrativa a partir de auditorias sin pegarle a
     assert.equal(result.seoScores[0].url, 'https://example.com');
     assert.ok(typeof result.aeoScores[0].score === 'number');
   });
-});
-
-test('seo module isRelevant matchea seo/aeo/geo y no matchea texto generico', () => {
-  assert.equal(isRelevant({ userText: 'haz una auditoria SEO de mi sitio' }), true);
-  assert.equal(isRelevant({ userText: 'optimiza esto para AEO' }), true);
-  assert.equal(isRelevant({ userText: 'hazme una landing' }), false);
 });

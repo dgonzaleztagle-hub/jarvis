@@ -16,6 +16,9 @@ function ensureStyles() {
     .agent-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
     .agent-dot.on { background: #2bff88; box-shadow: 0 0 6px #2bff88; }
     .agent-dot.off { background: #666; }
+    .agent-dot.working { background: #2bff88; animation: agent-pulse 1.4s ease-in-out infinite; }
+    @keyframes agent-pulse { 0%, 100% { opacity: 1; box-shadow: 0 0 6px #2bff88; } 50% { opacity: 0.35; box-shadow: 0 0 16px #2bff88; } }
+    .agent-card.working { border-color: rgba(43, 255, 136, 0.5); }
     .agent-name { font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; font-size: 12px; }
     .agent-goal { font-size: 11px; opacity: 0.8; margin-bottom: 6px; line-height: 1.4; }
     .agent-meta { font-size: 10px; opacity: 0.6; margin-bottom: 8px; }
@@ -28,13 +31,24 @@ function ensureStyles() {
     .agent-btn.danger:hover { background: rgba(255, 80, 80, 0.15); }
     .agent-btn.danger.arm { background: rgba(255, 80, 80, 0.25); border-color: #ff5050; color: #ff9090; }
     .agents-empty { font-size: 11px; opacity: 0.6; padding: 8px 2px; }
+    .agent-result.needs-input { border-left-color: rgba(255, 196, 0, 0.7); color: #ffd866; }
+    .agent-answer { display: flex; gap: 6px; margin-bottom: 8px; }
+    .agent-answer input { flex: 1; font-size: 10px; padding: 4px 6px; border-radius: 4px; border: 1px solid rgba(255, 196, 0, 0.5); background: rgba(0, 0, 0, 0.3); color: inherit; }
+    .agent-answer button { font-size: 10px; padding: 3px 10px; border-radius: 4px; border: 1px solid rgba(255, 196, 0, 0.6); background: rgba(255, 196, 0, 0.15); color: inherit; cursor: pointer; }
+    .agent-answer button:hover { background: rgba(255, 196, 0, 0.3); }
   `;
   document.head.appendChild(style);
 }
 
+const WEEKDAY_LABELS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+
 function humanSchedule(schedule = {}) {
   if (schedule.type === 'daily') return `Diario a las ${schedule.at}`;
   if (schedule.type === 'interval') return `Cada ${schedule.minutes} min`;
+  if (schedule.type === 'weekly') {
+    const days = (schedule.daysOfWeek || []).map((d) => WEEKDAY_LABELS[d] || d).join(', ');
+    return `${days} a las ${schedule.at}`;
+  }
   return 'Manual';
 }
 
@@ -46,11 +60,20 @@ function humanLastRun(agent) {
   return `Última corrida: ${when}${status}`;
 }
 
+// agentIds que están corriendo AHORA MISMO, según los eventos SSE
+// agent_run_started/completed/failed/needs_*. Vive a nivel de módulo (no del
+// panel) para sobrevivir a refresh() y poder pintar el pulso apenas llega el
+// evento, sin esperar al próximo poll de /agents.
+const runningIds = new Set();
+
 function buildAgentCard(agent, refresh) {
   const card = el('div', 'agent-card');
+  card.dataset.agentId = agent.id;
+  const working = agent.running || runningIds.has(agent.id);
+  if (working) card.classList.add('working');
 
   const head = el('div', 'agent-head');
-  head.appendChild(el('span', `agent-dot ${agent.enabled ? 'on' : 'off'}`));
+  head.appendChild(el('span', `agent-dot ${working ? 'working' : (agent.enabled ? 'on' : 'off')}`));
   head.appendChild(el('span', 'agent-name', agent.name));
   card.appendChild(head);
 
@@ -62,10 +85,35 @@ function buildAgentCard(agent, refresh) {
   const lastResult = agent.lastResult;
   if (lastResult) {
     const failed = lastResult.status === 'failed';
+    const needsInput = lastResult.status === 'needs_input';
     const text = failed
       ? `Falló: ${lastResult.error || 'error desconocido'}`
       : (lastResult.speak || 'Sin novedades que reportar.');
-    card.appendChild(el('div', `agent-result${failed ? ' failed' : ''}`, text));
+    card.appendChild(el('div', `agent-result${failed ? ' failed' : ''}${needsInput ? ' needs-input' : ''}`, text));
+
+    // Pregunta pendiente de una corrida desatendida (ej: falta un dato) — a
+    // diferencia de antes, acá SÍ se puede responder sin abrir el chat ni
+    // recrear el agente. La respuesta se inyecta solo en esta corrida puntual.
+    if (needsInput) {
+      const answerRow = el('div', 'agent-answer');
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.placeholder = 'Responde aquí...';
+      const answerBtn = document.createElement('button');
+      answerBtn.textContent = 'Responder';
+      answerBtn.addEventListener('click', async () => {
+        const answer = input.value.trim();
+        if (!answer) return;
+        answerBtn.disabled = true;
+        answerBtn.textContent = 'Enviando...';
+        try { await api('/agents/answer', { method: 'POST', body: JSON.stringify({ agent: agent.id, answer }) }); }
+        finally { refresh(); }
+      });
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') answerBtn.click(); });
+      answerRow.appendChild(input);
+      answerRow.appendChild(answerBtn);
+      card.appendChild(answerRow);
+    }
   }
 
   const actions = el('div', 'agent-actions');
@@ -132,13 +180,33 @@ export async function openAgentsPanel() {
     }
     for (const agent of agents) container.appendChild(buildAgentCard(agent, refresh));
 
+    // zone:'left' — vive fijo en esa columna junto al correo/landings, que se
+    // pueden cerrar y no compiten por el espacio. Es la casa permanente de los
+    // agentes en el HUD, no un panel que aparece y desaparece.
     FloatingPanel.open('agents', {
       title: `⚙  AGENTES (${agents.filter(a => a.enabled).length}/${agents.length})`,
       contentNode: container,
-      zone: 'right',
+      zone: 'left',
       width: '380px'
     });
   };
 
   await refresh();
+}
+
+// Prende/apaga el pulso de "trabajando" en el momento real del evento SSE
+// (agent_run_started / agent_run_completed|failed|needs_*), sin esperar al
+// próximo refresh. Si el panel está abierto, toca el DOM directo (sin
+// recargar de /agents — evita parpadeo y no pierde texto que el usuario
+// esté escribiendo en el input de "Responder").
+export function markAgentRunning(agentId, isRunning) {
+  if (isRunning) runningIds.add(agentId); else runningIds.delete(agentId);
+  const card = document.querySelector(`.agent-card[data-agent-id="${agentId}"]`);
+  if (!card) return;
+  card.classList.toggle('working', isRunning);
+  const dot = card.querySelector('.agent-dot');
+  if (dot) {
+    dot.classList.remove('on', 'off', 'working');
+    dot.classList.add(isRunning ? 'working' : 'on');
+  }
 }

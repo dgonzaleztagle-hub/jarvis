@@ -500,7 +500,7 @@ function createRuntime(options = {}) {
 
   const agentStore = new AgentStore({ dataDir });
   const budgetConfig = new BudgetConfig({ dataDir });
-  const agentScheduler = new AgentScheduler({ store: agentStore, conversationRuntime, eventBus, usageMeter, budgetConfig, auditTrail });
+  const agentScheduler = new AgentScheduler({ store: agentStore, conversationRuntime, eventBus, usageMeter, budgetConfig, auditTrail, toolRegistry });
   for (const tool of createAgentTools({ store: agentStore, scheduler: agentScheduler, budgetConfig, usageMeter })) {
     toolRegistry.register(tool);
   }
@@ -756,12 +756,20 @@ function createRuntime(options = {}) {
     // humano mirando una corrida desatendida) — eso SÍ se avisa aunque no haya
     // sido programada (ej: la validación inmediata de agents.create), porque el
     // usuario ya puede haber seguido con otra cosa cuando eso pasó.
-    if (run.trigger !== 'schedule' && status !== 'needs_approval') return;
+    if (run.trigger !== 'schedule' && status !== 'needs_approval' && status !== 'needs_input') return;
+    // La misión ya le entregó algo al usuario por un canal real (ej: el
+    // WhatsApp que era justo su tarea) — avisar "tu agente corrió" además
+    // sería un segundo aviso del mismo hecho. El WhatsApp/email/etc YA es
+    // el aviso. Solo aplica a corridas limpias (needs_approval/needs_input
+    // siguen avisando: ahí SÍ falta algo que el usuario debe resolver).
+    if (status === 'completed' && run.deliveredViaOutbound) return;
     const text = status === 'failed'
       ? `El agente ${run.name} falló en su corrida programada: ${run.error || 'error desconocido'}.`
       : status === 'needs_approval'
         ? `Tu agente ${run.name} quedó esperando tu aprobación para: ${(run.pendingTools || []).join(', ') || 'una acción'}. Entra al HUD para confirmarla o cancelarla.`
-        : `Tu agente ${run.name} terminó su corrida. ${run.speak || 'Sin novedades que reportar.'}`;
+        : status === 'needs_input'
+          ? `Tu agente ${run.name} necesita un dato para seguir: ${run.speak || ''} Respóndele desde el panel de agentes en el HUD.`
+          : `Tu agente ${run.name} terminó su corrida. ${run.speak || 'Sin novedades que reportar.'}`;
     agentNotifications.push({ text, name: run.name, agentId: run.agentId, status, at: run.at });
     if (agentNotifications.length > 50) agentNotifications.splice(0, agentNotifications.length - 50);
     if (telegramChannel.token && telegramChannel.allowedUserId) {
@@ -771,6 +779,7 @@ function createRuntime(options = {}) {
   eventBus.on('agent_run_completed', (event) => queueAgentNotification(event, 'completed'));
   eventBus.on('agent_run_failed', (event) => queueAgentNotification(event, 'failed'));
   eventBus.on('agent_run_needs_approval', (event) => queueAgentNotification(event, 'needs_approval'));
+  eventBus.on('agent_run_needs_input', (event) => queueAgentNotification(event, 'needs_input'));
   // Alerta de presupuesto (por-agente al 80% de su tope, o global): a
   // diferencia de las corridas, esta SÍ se anuncia aunque no haya sido
   // programada — es justo la clase de aviso que no puede esperar a que el

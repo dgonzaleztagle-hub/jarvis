@@ -15,19 +15,16 @@ const EXPERTISE = [
   'Si solo necesitas ver datos puntuales (no un entregable), usa web.audit_seo (SEO técnico: meta, headings, schema, robots, sitemap) o seo.audit_aeo (AEO/GEO: schema de entidad, contenido pregunta-respuesta, llms.txt, escaneabilidad) por separado.'
 ].join(' ');
 
-function isRelevant({ userText = '' } = {}) {
-  return /(\bseo\b|\baeo\b|\bgeo\b|posicionamiento|auditor[ií]a (web|de (sitio|p[aá]gina))|optimizaci[oó]n para (ia|inteligencia artificial|chatgpt|motores)|motores de (b[uú]squeda|respuesta)|ranking|llms\.txt)/i.test(String(userText));
-}
-
 function createSeoModule(deps) {
   return defineModule({
     name: 'seo',
     displayName: 'SEO',
     specialistName: 'Teo',
     expertise: EXPERTISE,
-    isRelevant,
-    tools: [createAeoAuditTool(), createReportTool(deps)]
+    tools: [createAeoAuditTool(), createReportTool(deps)],
+    voiceProfile: 'teo_voice',
+    tone: 'Hablas cercano y campechano, como un nerd simpático que explica algo técnico a un amigo — nunca como un reporte de auditoría leído en voz alta. Traduces lo técnico a por qué le importa al cliente ("esto importa porque Google ni te va a encontrar si..."), con curiosidad genuina por el problema. Conversacional y claro, sin sonar a checklist ni a manual — alguien con quien da gusto hablar de algo que suena aburrido.'
   });
 }
 
-module.exports = { createSeoModule, EXPERTISE, isRelevant };
+module.exports = { createSeoModule, EXPERTISE };

@@ -1,9 +1,21 @@
 const { google } = require('googleapis');
 const { withRetry } = require('../utils/retry');
 const { ConnectorCache } = require('../utils/connector-cache');
+const { tzParts, weekday, addDaysInTz, daysInMonth, startOfDayInTz, endOfDayInTz, zonedTime } = require('../utils/time');
+
+// El parser laxo de Date() "adivina" fechas para texto que no es una fecha
+// real — encontrado en vivo: new Date("mañana a las 9") no da NaN, da
+// 2001-09-01 (basura silenciosa, no un error). Sin año explícito de 4 dígitos
+// no hay garantía de que el string sea una fecha y no una frase en lenguaje
+// natural; en ese caso hay que pasar SIEMPRE por el parser de abajo, nunca
+// confiar en new Date() a ciegas.
+function looksLikeExplicitDate(value) {
+  if (value instanceof Date || typeof value === 'number') return true;
+  return /\d{4}/.test(String(value || ''));
+}
 
 function toIsoOrNull(value) {
-  if (!value) return null;
+  if (!value || !looksLikeExplicitDate(value)) return null;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;
   return date.toISOString();
@@ -16,8 +28,8 @@ function parseNaturalDateTime(value, baseDate = new Date()) {
   }
 
   const raw = String(value).trim();
-  const direct = new Date(raw);
-  if (!Number.isNaN(direct.getTime())) {
+  const direct = looksLikeExplicitDate(raw) ? new Date(raw) : null;
+  if (direct && !Number.isNaN(direct.getTime())) {
     return direct.toISOString();
   }
 
@@ -38,19 +50,18 @@ function parseNaturalDateTime(value, baseDate = new Date()) {
   if (meridiem === 'am' && hour === 12) hour = 0;
   if (hour > 23 || minute > 59) return null;
 
-  const candidate = new Date(baseDate);
-  candidate.setSeconds(0, 0);
+  // Día base en la ZONA DEL PRODUCTO, no en la del proceso Node — antes
+  // candidate.setHours/setDate usaban Date#getDate() local, una fuente de
+  // verdad distinta a JARVIS_TZ que podía desincronizar (mismo bug de fondo
+  // que el de los agentes diarios, ver agent-scheduler.js).
+  let dayDelta = 0;
+  if (/\b(tomorrow|manana|mañana)\b/.test(lower)) dayDelta = 1;
+  else if (/\b(yesterday|ayer)\b/.test(lower)) dayDelta = -1;
+  else if (/\b(next week|proxima semana|pr[oó]xima semana)\b/.test(lower)) dayDelta = 7;
 
-  if (/\b(tomorrow|manana|mañana)\b/.test(lower)) {
-    candidate.setDate(candidate.getDate() + 1);
-  } else if (/\b(yesterday|ayer)\b/.test(lower)) {
-    candidate.setDate(candidate.getDate() - 1);
-  } else if (/\b(next week|proxima semana|pr[oó]xima semana)\b/.test(lower)) {
-    candidate.setDate(candidate.getDate() + 7);
-  }
-
-  candidate.setHours(hour, minute, 0, 0);
-  return candidate.toISOString();
+  const targetDate = dayDelta !== 0 ? addDaysInTz(baseDate, dayDelta) : baseDate;
+  const p = tzParts(targetDate);
+  return zonedTime(+p.year, +p.month, +p.day, hour, minute, 0).toISOString();
 }
 
 function normalizeGuests(value) {
@@ -103,10 +114,12 @@ function normalizeConferenceInput(input = {}) {
   return null;
 }
 
+// Todos los límites de día/semana/mes se calculan EN LA ZONA DEL PRODUCTO
+// (utils/time.js), no con los getters locales de Date (que leen la zona del
+// PROCESO Node — una fuente de verdad distinta que podía desincronizar de
+// JARVIS_TZ, el mismo bug de fondo que el de los agentes diarios).
 function resolvePeriod(period, baseDate = new Date()) {
-  const d = new Date(baseDate);
-  const startOfDay = (date) => new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0);
-  const endOfDay = (date) => new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59);
+  const d = baseDate;
 
   const key = String(period || '')
     .normalize('NFD').replace(/[̀-ͯ]/g, '')
@@ -116,43 +129,44 @@ function resolvePeriod(period, baseDate = new Date()) {
   switch (key) {
     case 'today':
     case 'hoy':
-      return { timeMin: startOfDay(d).toISOString(), timeMax: endOfDay(d).toISOString() };
+      return { timeMin: startOfDayInTz(d).toISOString(), timeMax: endOfDayInTz(d).toISOString() };
     case 'tomorrow':
     case 'manana':
     case 'mañana': {
-      const t = new Date(d); t.setDate(d.getDate() + 1);
-      return { timeMin: startOfDay(t).toISOString(), timeMax: endOfDay(t).toISOString() };
+      const t = addDaysInTz(d, 1);
+      return { timeMin: t.toISOString(), timeMax: endOfDayInTz(t).toISOString() };
     }
     case 'this_week':
     case 'esta_semana': {
-      const day = d.getDay();
-      const monday = new Date(d); monday.setDate(d.getDate() - ((day + 6) % 7));
-      const sunday = new Date(monday); sunday.setDate(monday.getDate() + 6);
-      return { timeMin: startOfDay(monday).toISOString(), timeMax: endOfDay(sunday).toISOString() };
+      const day = weekday(d); // 0=domingo..6=sábado
+      const monday = addDaysInTz(d, -((day + 6) % 7));
+      const sunday = addDaysInTz(monday, 6);
+      return { timeMin: monday.toISOString(), timeMax: endOfDayInTz(sunday).toISOString() };
     }
     case 'next_week':
     case 'proxima_semana':
     case 'siguiente_semana': {
-      const day = d.getDay();
-      const nextMon = new Date(d); nextMon.setDate(d.getDate() - ((day + 6) % 7) + 7);
-      const nextSun = new Date(nextMon); nextSun.setDate(nextMon.getDate() + 6);
-      return { timeMin: startOfDay(nextMon).toISOString(), timeMax: endOfDay(nextSun).toISOString() };
+      const day = weekday(d);
+      const nextMon = addDaysInTz(d, -((day + 6) % 7) + 7);
+      const nextSun = addDaysInTz(nextMon, 6);
+      return { timeMin: nextMon.toISOString(), timeMax: endOfDayInTz(nextSun).toISOString() };
     }
     case 'next_3_days':
     case 'proximos_3_dias': {
-      const end = new Date(d); end.setDate(d.getDate() + 3);
-      return { timeMin: startOfDay(d).toISOString(), timeMax: endOfDay(end).toISOString() };
+      const end = addDaysInTz(d, 3);
+      return { timeMin: startOfDayInTz(d).toISOString(), timeMax: endOfDayInTz(end).toISOString() };
     }
     case 'next_7_days':
     case 'proximos_7_dias': {
-      const end = new Date(d); end.setDate(d.getDate() + 7);
-      return { timeMin: startOfDay(d).toISOString(), timeMax: endOfDay(end).toISOString() };
+      const end = addDaysInTz(d, 7);
+      return { timeMin: startOfDayInTz(d).toISOString(), timeMax: endOfDayInTz(end).toISOString() };
     }
     case 'this_month':
     case 'este_mes': {
-      const first = new Date(d.getFullYear(), d.getMonth(), 1);
-      const last = new Date(d.getFullYear(), d.getMonth() + 1, 0);
-      return { timeMin: startOfDay(first).toISOString(), timeMax: endOfDay(last).toISOString() };
+      const p = tzParts(d);
+      const first = zonedTime(+p.year, +p.month, 1, 0, 0, 0);
+      const last = zonedTime(+p.year, +p.month, daysInMonth(+p.year, +p.month), 23, 59, 59);
+      return { timeMin: first.toISOString(), timeMax: last.toISOString() };
     }
     default:
       return null;
@@ -490,4 +504,4 @@ function createGoogleCalendarTools({ authFactory }) {
   ];
 }
 
-module.exports = { createGoogleCalendarTools };
+module.exports = { createGoogleCalendarTools, resolvePeriod, parseNaturalDateTime };

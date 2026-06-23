@@ -8,9 +8,32 @@ const { generateWithContinuation } = require('../model/long-content');
 const { sanitizeCalendarCreateEventInput } = require('./calendar-input-sanitizer');
 
 const { isAffirmativeConfirmation, isExplicitGoAhead, isCapabilitiesIntent } = require("./conversation-intents");
-const { formatConfirmationInput, formatConfirmationRequest, buildToolSummary, summarizeConversationResult, enforceSpeakContract, responseSeemsIncomplete, summarizeToolResults } = require("./conversation-presenter");
+const { formatConfirmationInput, formatConfirmationRequest, buildToolSummary, summarizeConversationResult, enforceSpeakContract, responseSeemsIncomplete, summarizeToolResults, stripToolCallLeak, stripFabricatedActionClaim } = require("./conversation-presenter");
 const { buildModelFailureMessage, coercePlainModelText } = require("./model-response-parser");
 
+// Reintenta UNA vez con techo de tokens ampliado cuando una respuesta JSON
+// quedó cortada por presupuesto (stopReason 'max_tokens') — tanto si el corte
+// rompió el parseo (excepción con stopReason) como si cayó justo entre dos
+// campos y el JSON parseó "bien" pero con una frase a medias en su interior.
+// Nunca se debe entregar al usuario ni a la voz una frase cortada por un
+// techo de tokens demasiado bajo: aplica a CUALQUIER llamada de decisión/
+// continuación del modelo, no solo a la primera (ver bug real: el corte pasó
+// en la ronda de cierre tras usar tools, que no tenía este resguardo).
+async function generateJsonGuarded(modelProvider, params, retryMaxTokens) {
+  let result;
+  try {
+    result = await modelProvider.generateJson(params);
+  } catch (error) {
+    if (error.stopReason === 'max_tokens' && retryMaxTokens > params.maxTokens) {
+      return modelProvider.generateJson({ ...params, maxTokens: retryMaxTokens, purpose: `${params.purpose}_retry` });
+    }
+    throw error;
+  }
+  if (result.stopReason === 'max_tokens' && retryMaxTokens > params.maxTokens) {
+    return modelProvider.generateJson({ ...params, maxTokens: retryMaxTokens, purpose: `${params.purpose}_retry` });
+  }
+  return result;
+}
 
 class ConversationRuntime {
   constructor({ eventBus, taskRuntime, toolRegistry, modelProvider, presenterRegistry, memoryStore, workingMemoryStore, contextAssembler, knowledgeGraph, getActiveModel, persona, historyStore, modules }) {
@@ -45,31 +68,26 @@ class ConversationRuntime {
     this._lessonsInPlay = [];
   }
 
-  // Primer módulo cuyo dominio calza con el pedido (o null). Jarvis sigue siendo
-  // la única puerta; esto solo decide qué cerebro especialista se activa.
-  activeModuleFor(text) {
-    for (const m of this.modules) {
-      try {
-        if (m && typeof m.isRelevant === 'function' && m.isRelevant({ userText: text })) return m;
-      } catch (_) { /* un módulo nunca debe romper el turno */ }
-    }
-    return null;
+  // Con tono definido: el especialista HABLA en primera persona — el usuario
+  // debe oír a ${name}, no a Jarvis narrando lo que ${name} hace. Se usa tanto
+  // en la ronda de tools/cierre (inyectado dinámico, ver buildFinalResponsePrompt/
+  // buildToolContinuationPrompt) como base de la regla estática del JSON schema
+  // (ver buildModuleRoster en conversation-prompts.js) para la decisión inicial
+  // — sin la versión dinámica en el cierre, el carácter se re-fijaba a la fuerza
+  // ahí ("Eres Jarvis Codex... Mantén tu carácter"), pisando el cambio de voz
+  // si el turno usó alguna herramienta (encontrado en vivo: el audit de Teo
+  // salía con tono neutro de Jarvis pese a la instrucción inicial).
+  buildVoiceSwitchBlock(m) {
+    if (!m?.tone) return '';
+    const name = m.specialistName || 'el especialista';
+    return [
+      `CAMBIO DE VOZ PARA ESTE TURNO — ES LO MÁS IMPORTANTE DE ESTE MENSAJE:`,
+      `Habla en PRIMERA PERSONA como ${name}, no como Jarvis narrando a ${name} en tercera persona. Nunca digas "${name} necesita..." o "${name} armó..." — di "necesito..." o "armé...", como si ${name} fuera quien te está hablando directo. Esto REEMPLAZA por completo cualquier instrucción de "mantén tu carácter [de Jarvis]" o "REGISTRO Y TONO" para este turno (eso es el registro de Jarvis en charla normal, no el de ${name}).`,
+      m.tone,
+      `El piso de honestidad/no-fabricación sigue exactamente igual — esto solo cambia CÓMO suena, nunca qué reglas sigue.`
+    ].join(' ');
   }
 
-  // Arma el contexto del especialista (su cerebro/expertise) para inyectarlo en
-  // el turno. Context-swap inline: NO abre un sub-loop ni otro chat.
-  buildSpecialistContext(m) {
-    if (!m) return '';
-    const domain = m.displayName || m.name;
-    const name = m.specialistName || 'el especialista';
-    const who = m.specialistName ? `${m.specialistName} (${domain})` : domain;
-    return [
-      `[Especialista del turno: ${who}]`,
-      `Este pedido entra en el dominio ${domain}. Trabajas junto a ${name}, que es parte de Jarvis (no un chat aparte): adopta su criterio para este turno.`,
-      m.expertise || '',
-      `ATRIBUYE el trabajo a ${name} POR NOMBRE, en este turno y de forma natural — sea pidiendo lo que falta ("${name} necesita saber...") o entregando ("${name} ya armó..."). El usuario debe VER que ${name} está trabajando; no lo escondas. Igual sigues siendo tú quien orquesta y responde.`
-    ].filter(Boolean).join('\n');
-  }
 
   // Registra un turno completo (usuario + resumen del modelo) en memoria y en
   // disco. Único punto de escritura de this.history para mantener ambos en
@@ -95,7 +113,12 @@ class ConversationRuntime {
     if (!this.historyStore || !this.modelProvider) return;
     if (this.pendingIntent) return; // no comprimir con un hilo abierto
     const evicted = this.historyStore.loadEvicted();
-    if (!evicted || evicted.length === 0) return;
+    // Por diseño, history.length>12 eviciona 2 entradas (1 turno) en CADA
+    // turno una vez que se cruza el techo — si comprimiéramos apenas hay algo
+    // eviccionado, esto llamaría al modelo y mostraría el toast "Historial
+    // comprimido" en CADA turno para siempre. Se acumula en lotes de ~3 turnos
+    // (6 entradas) antes de gastar una llamada y avisar al usuario.
+    if (!evicted || evicted.length < 6) return;
 
     const evictedText = evicted
       .map((e) => `${e.role === 'model' ? 'Jarvis' : 'Usuario'}: ${e.text}`)
@@ -142,19 +165,21 @@ class ConversationRuntime {
     return prompts.buildSystemPrompt({
       persona: this.persona,
       toolList: this.toolRegistry.list(),
-      getActiveModel: this.getActiveModel
+      getActiveModel: this.getActiveModel,
+      modules: this.modules
     });
   }
 
-  buildFinalResponsePrompt() {
-    return prompts.buildFinalResponsePrompt();
+  buildFinalResponsePrompt(specialist) {
+    return prompts.buildFinalResponsePrompt({ voiceOverride: this.buildVoiceSwitchBlock(specialist) });
   }
 
-  buildToolContinuationPrompt({ memoryContext = '', isLastRound = false } = {}) {
+  buildToolContinuationPrompt({ memoryContext = '', isLastRound = false, specialist = null } = {}) {
     return prompts.buildToolContinuationPrompt({
       toolList: this.toolRegistry.list(),
       memoryContext,
-      isLastRound
+      isLastRound,
+      voiceOverride: this.buildVoiceSwitchBlock(specialist)
     });
   }
 
@@ -241,12 +266,12 @@ class ConversationRuntime {
         purpose: 'response_repair'
       });
 
-      return {
+      return stripFabricatedActionClaim(stripToolCallLeak({
         speak: repaired.data?.speak || initialResponse.speak,
         visual: repaired.data?.visual || initialResponse.visual,
         format: repaired.data?.format || initialResponse.format,
         outputValue: repaired.data?.outputValue || initialResponse.outputValue
-      };
+      }), { userText, toolResultsCount: toolResults.length });
     } catch (_) {
       if (isCapabilitiesIntent(userText)) {
         return prompts.buildCapabilitiesResponse(this.toolRegistry, this.memoryStore);
@@ -449,24 +474,15 @@ class ConversationRuntime {
     // ventana de 6 turnos en memoria. Viaja aquí, no en el system (cacheable).
     const summaryContext = this._cachedSummary || '';
 
-    // Especialista de turno: si el pedido entra en el dominio de un módulo
-    // (ej: Diseño → Alex), se inyecta su cerebro como contexto del turno y se
-    // avisa al HUD para que muestre al especialista trabajando.
-    const specialist = this.activeModuleFor(text);
-    const specialistContext = this.buildSpecialistContext(specialist);
-    if (specialist) {
-      this.eventBus?.emit('specialist_active', {
-        name: specialist.name,
-        domain: specialist.displayName || specialist.name,
-        specialist: specialist.specialistName || null,
-        taskId: conversationTask.id
-      });
-    }
-
     // El contexto dinámico viaja en el mensaje actual, no en el system ni en el
     // historial: el system queda estable (cacheable) y el historial guarda el
     // texto crudo del usuario sin arrastrar contextos viejos turno tras turno.
-    const dynamicContext = [summaryContext, memoryContext, workingContext, pendingContext, pendingIntentContext, specialistContext].filter(Boolean).join('\n\n');
+    // Qué especialista (si alguno) aplica este turno ya NO se decide por regex
+    // de palabras clave acá: el modelo lo declara él mismo en su propia
+    // decisión JSON (campo "specialist"), con su propio criterio de lenguaje
+    // natural — el roster completo de Alex/Mara/Teo vive en el system prompt
+    // estable (cacheado), no hace falta inyectarlo por turno.
+    const dynamicContext = [summaryContext, memoryContext, workingContext, pendingContext, pendingIntentContext].filter(Boolean).join('\n\n');
     const currentUserText = dynamicContext ? `${dynamicContext}\n\n[Mensaje del usuario]\n${text}` : text;
 
     const messages = [
@@ -487,6 +503,22 @@ class ConversationRuntime {
         maxTokens: 450,
         purpose: 'conversation_decision'
       });
+      // Caso sin excepción: el JSON parseó bien pero el corte cayó justo entre
+      // dos campos (ej. toolCalls cerrado, "speak" a medias) — stopReason lo
+      // delata aunque no haya reventado el parseo. Mismo resguardo que el catch.
+      if (modelResult.stopReason === 'max_tokens') {
+        modelResult = await this.modelProvider.generateJson({
+          system: this.buildSystemPrompt(),
+          messages,
+          temperature: 0.3,
+          maxTokens: 1200,
+          purpose: 'conversation_decision_retry'
+        });
+        this.taskRuntime.emitTaskEvent(conversationTask, 'task_progress', {
+          channel,
+          step: 'model_decision_retry_after_truncation'
+        });
+      }
     } catch (error) {
       // El techo de la decisión (450) está pensado para el JSON corto de
       // Fase 1. Si el modelo lo chocó, lo que haya en rawText está cortado
@@ -511,8 +543,8 @@ class ConversationRuntime {
       }
 
       if (!modelResult) {
-      const plainResponse = coercePlainModelText(error.rawText);
-      if (plainResponse) {
+      const plainResponse = stripToolCallLeak(coercePlainModelText(error.rawText) || {});
+      if (plainResponse.speak || plainResponse.visual) {
         conversationTask.status = 'completed';
         conversationTask.result = formatHumanReadable(plainResponse, { userText: text, toolResults: [] });
         conversationTask.result = applyOutputValueContract(conversationTask.result, { userText: text });
@@ -557,7 +589,46 @@ class ConversationRuntime {
       }
     }
 
-    const decision = modelResult.data || {};
+    const decision = stripToolCallLeak(modelResult.data || {});
+
+    // El modelo declaró por su propio criterio (no regex) si este turno es de
+    // uno de sus especialistas — ver el campo "specialist" del schema en
+    // buildSystemPrompt. Se resuelve al módulo real para el evento del HUD y
+    // para que las rondas de tools/cierre hablen con SU voz (buildVoiceSwitchBlock).
+    const specialist = this.modules.find((m) => m.name === decision.specialist) || null;
+    if (specialist) {
+      this.eventBus?.emit('specialist_active', {
+        name: specialist.name,
+        domain: specialist.displayName || specialist.name,
+        specialist: specialist.specialistName || null,
+        voiceProfile: specialist.voiceProfile || null,
+        taskId: conversationTask.id
+      });
+    }
+
+    // Cuando el usuario pide que VARIOS especialistas hablen en el mismo turno
+    // (ej: "que se presenten todos"), el modelo usa "segments" en vez de
+    // "speak" único — bug real encontrado en vivo: sin esto, el modelo
+    // respondía "Claro, que hablen ellos" y no entregaba nada, porque solo
+    // podía declarar UN especialista por turno. Se resuelve cada segmento a
+    // su módulo real (voz) acá; el HUD reproduce la secuencia con la voz de
+    // cada uno.
+    const segments = Array.isArray(decision.segments)
+      ? decision.segments
+        .map((seg) => {
+          const mod = this.modules.find((m) => m.name === seg?.specialist) || null;
+          const segText = String(seg?.text || '').trim();
+          if (!segText) return null;
+          return {
+            specialist: mod?.name || null,
+            specialistName: mod?.specialistName || null,
+            voiceProfile: mod?.voiceProfile || null,
+            text: segText
+          };
+        })
+        .filter(Boolean)
+      : null;
+
     const toolResults = [];
     const toolCalls = Array.isArray(decision.toolCalls) ? decision.toolCalls : [];
     const requestedOutputValue = decision.outputValue || inferOutputValue({
@@ -646,10 +717,10 @@ class ConversationRuntime {
 
       let continuation;
       try {
-        continuation = await this.modelProvider.generateJson({
+        continuation = await generateJsonGuarded(this.modelProvider, {
           system: isLastRound
-            ? this.buildFinalResponsePrompt()
-            : this.buildToolContinuationPrompt({ memoryContext, isLastRound: false }),
+            ? this.buildFinalResponsePrompt(specialist)
+            : this.buildToolContinuationPrompt({ memoryContext, isLastRound: false, specialist }),
           messages: [
             ...loopMessages,
             {
@@ -671,7 +742,7 @@ class ConversationRuntime {
           temperature: 0.2,
           maxTokens: roundMaxTokens,
           purpose: isLastRound ? 'final_response' : 'tool_continuation'
-        });
+        }, Math.min(roundMaxTokens * 2, 6000));
       } catch (err) {
         this.taskRuntime.emitTaskEvent(conversationTask, 'task_progress', {
           step: `tool_continuation_fallback_round_${round}`,
@@ -681,7 +752,7 @@ class ConversationRuntime {
         break;
       }
 
-      currentDecision = continuation.data || {};
+      currentDecision = stripToolCallLeak(continuation.data || {});
       currentToolCalls = isLastRound
         ? []
         : (Array.isArray(currentDecision.toolCalls) ? currentDecision.toolCalls : []);
@@ -722,6 +793,23 @@ class ConversationRuntime {
     if (toolResults.length > 0 && (hasWaitingConfirmation || this.shouldUseDeterministicClosing(toolResults, requestedOutputValue))) {
       finalResponse = this.fallbackFinalResponse(toolResults);
     }
+
+    // segments solo aplica al turno sin tools (la decisión inicial, antes de
+    // cualquier ronda de continuación que ya no carga ese campo) — el HUD
+    // reproduce cada uno con su propia voz. "speak" (voz/canales sin pantalla,
+    // ej Telegram) va sin formato, todo seguido — nunca markdown en voz. El
+    // texto de pantalla SÍ separa por especialista (una línea por uno, con su
+    // nombre): si no, en pantalla se ve como un solo párrafo corrido sin saber
+    // quién dice qué, aunque por voz suene correctamente separado.
+    if (segments && segments.length > 0 && toolResults.length === 0) {
+      finalResponse.speak = finalResponse.speak || segments.map((s) => s.text).join(' ');
+      finalResponse.visual = finalResponse.visual || segments
+        .map((s) => `**${s.specialistName || 'Especialista'}:** ${s.text}`)
+        .join('\n\n');
+      finalResponse.segments = segments;
+    }
+
+    finalResponse = stripFabricatedActionClaim(finalResponse, { userText: text, toolResultsCount: toolResults.length });
 
     // Si el turno declaró screenDetail, su brevedad es intencional: el detalle
     // viaja en Fase 2, no es un "turno fantasma". No lo mandamos a reparar.
@@ -769,7 +857,8 @@ class ConversationRuntime {
       format: finalResponse.format,
       outputValue: finalResponse.outputValue,
       pendingContent: deferToSse,
-      toolResults
+      toolResults,
+      ...(finalResponse.segments ? { segments: finalResponse.segments } : {})
     };
 
     // Canales no-HUD (Telegram): generar el detalle inline antes de devolver,

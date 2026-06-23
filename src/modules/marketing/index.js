@@ -13,19 +13,16 @@ const EXPERTISE = [
   'Cierras el loop crear→publicar→medir→optimizar: después de publicar en Meta (FB/IG), usa social.insights para ver cómo le fue a un post puntual o social.report para un resumen de los últimos. Úsalo para fundamentar la próxima recomendación con datos reales, no solo intuición.'
 ].join(' ');
 
-function isRelevant({ userText = '' } = {}) {
-  return /(marketing|campa[ñn]a|publica(r|)|postear|\bpost\b|redes sociales|red social|instagram|facebook|linkedin|tiktok|contenido|copy|anuncio|reel|calendario de contenido|estrategia de marca)/i.test(String(userText));
-}
-
 function createMarketingModule(deps) {
   return defineModule({
     name: 'marketing',
     displayName: 'Marketing',
     specialistName: 'Mara',
     expertise: EXPERTISE,
-    isRelevant,
-    tools: createSocialHubTools(deps)
+    tools: createSocialHubTools(deps),
+    voiceProfile: 'mara_voice',
+    tone: 'Hablas energética y cercana, como alguien que vive metida en redes y conecta con audiencias todo el día — nada de tono ejecutivo ni reporte de métricas frío. Te emocionas con una buena idea ("esto le va a encantar a tu audiencia"), haces preguntas genuinas para entender al cliente antes de proponer, y celebras lo que funciona sin exagerar. Conversacional, frases naturales, como una persona real vendiendo una idea en la que cree — no un dashboard que habla.'
   });
 }
 
-module.exports = { createMarketingModule, EXPERTISE, isRelevant };
+module.exports = { createMarketingModule, EXPERTISE };

@@ -21,20 +21,16 @@ const EXPERTISE = [
   'No hay generación de imágenes en Jarvis. Para que una landing no se vea vacía ni con huecos, usa design.find_photos (fotografía real y gratuita de Pexels) y pasa las URLs reales que te devuelve dentro del brief de preview.render_html para que se usen como <img src> de verdad — nunca un placeholder que aparenta ser una foto.'
 ].join(' ');
 
-// ¿El turno es de dominio diseño? Heurística para el context-swap (capa futura).
-function isRelevant({ userText = '' } = {}) {
-  return /(landing|p[aá]gina web|sitio web|maqueta|dise[ñn]o web|web para|render(iza|)|mockup)/i.test(String(userText));
-}
-
 function createDesignModule(deps) {
   return defineModule({
     name: 'design',
     displayName: 'Diseño',
     specialistName: 'Alex', // el "departamento" tiene cara: Alex, director creativo
     expertise: EXPERTISE,
-    isRelevant,
-    tools: [createPreviewTool(deps), createReferenceAnalysisTool(deps), createStockPhotoTool(deps)]
+    tools: [createPreviewTool(deps), createReferenceAnalysisTool(deps), createStockPhotoTool(deps)],
+    voiceProfile: 'alex_voice',
+    tone: 'Hablas fluido y entusiasta, como un director creativo de verdad — nada de respuestas en bloques ni listas acartonadas habladas. Reaccionas con gusto genuino a lo visual ("esto va a quedar brutal", "ese contraste no funciona, lo cambio"). Usas comparaciones simples (tipografías, referencias, sensaciones) en vez de jerga técnica seca. Frases cortas, ritmo variado, como alguien que disfruta lo que hace — no un ejecutor frío reportando estado.'
   });
 }
 
-module.exports = { createDesignModule, EXPERTISE, isRelevant };
+module.exports = { createDesignModule, EXPERTISE };

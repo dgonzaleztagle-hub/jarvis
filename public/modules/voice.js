@@ -246,7 +246,7 @@ export function fallbackSpeak(content) {
   speechSynthesis.speak(utt);
 }
 
-export async function speakText(text) {
+export async function speakText(text, { voiceProfile } = {}) {
   if (!state.voiceEnabled) return;
   // Strip URLs and markdown before TTS — they read as gibberish letter-by-letter
   // ("**" se lee como "asterisco asterisco")
@@ -265,12 +265,22 @@ export async function speakText(text) {
   stopListening({ manual: true });
   clearListeningRestart();
   try {
-    const data = await api('/voice/speak', {
-      method: 'POST',
-      body: JSON.stringify({ text: content, voiceProfile: state.voiceProfile, rate: state.voiceRate, volume: state.voiceVolume, pitch: state.voicePitch })
-    });
+    // Si un especialista (Alex/Mara/Teo) está hablando este turno, su perfil
+    // de voz va SOLO (sin el rate/volume/pitch afinados por Daniel para SU
+    // propia voz) — si no, esos ajustes pisarían el carácter del perfil del
+    // especialista y todos sonarían igual de "Jarvis", solo con otro acento.
+    const body = voiceProfile
+      ? { text: content, voiceProfile }
+      : { text: content, voiceProfile: state.voiceProfile, rate: state.voiceRate, volume: state.voiceVolume, pitch: state.voicePitch };
+    const data = await api('/voice/speak', { method: 'POST', body: JSON.stringify(body) });
     if (data?.url) {
-      if (state.vaderEffect) {
+      // El efecto Vader (playbackRate 0.80, bajos, distorsión, reverb) es el
+      // carácter propio de Jarvis — aplicado sin condición, aplastaba también
+      // la voz de los especialistas: Alex/Teo (voces masculinas, registro
+      // similar) terminaban sonando casi igual a Jarvis después del
+      // procesamiento, y solo Mara (voz femenina) se notaba distinta. Si está
+      // hablando un especialista, su voz va limpia, sin el filtro de Vader.
+      if (state.vaderEffect && !voiceProfile) {
         const node = await playVaderAudio(data.url, {
           onStart: () => { state.speaking=true; state.currentAudio=node; updateVoiceUI(); },
           onEnd:   () => { state.speaking=false; state.currentAudio=null; setListeningCooldown(2400); updateVoiceUI(); scheduleListeningRestart(650); },
@@ -351,6 +361,29 @@ export function waitForSpeechEnd(startTimeoutMs = 6000, speakTimeoutMs = 90000) 
 export async function speakAfter(text) {
   await waitForSilence();
   await speakText(text);
+}
+
+/**
+ * Reproduce varios segmentos en secuencia, cada uno con su propia voz —
+ * para cuando varios especialistas hablan en el mismo turno (ej: "que se
+ * presenten todos"). Espera a que cada uno termine antes de empezar el
+ * siguiente para que no se pisen ni se corten.
+ *
+ * Generaliza el mismo pulso de "trabajando" del panel de especialistas que ya
+ * existía para el caso de uno solo (vía specialist_active) — sin esto, el
+ * panel se quedaba mudo mientras 2-3 especialistas hablaban en secuencia,
+ * exactamente la misma clase de bug que el de la voz: la pieza visual nunca
+ * se generalizó al caso de varios, solo al de uno.
+ */
+export async function speakSegments(segments = []) {
+  const { setWorking } = await import('./specialists-panel.js');
+  for (const seg of segments) {
+    if (!seg?.text) continue;
+    if (seg.specialist) setWorking(seg.specialist, true);
+    await speakText(seg.text, { voiceProfile: seg.voiceProfile });
+    await waitForSpeechEnd();
+    if (seg.specialist) setWorking(seg.specialist, false);
+  }
 }
 
 /* ─── SPEECH RECOGNITION ────────────────────────────────────────────────────── */

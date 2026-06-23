@@ -527,6 +527,82 @@ test('conversation runtime preserves model-selected visual format', async () => 
   assert.equal(task.result.outputValue.mode, 'inspection');
 });
 
+test('conversation runtime detecta y sanea fuga de <function_calls> en speak (Haiku narrando una tool call en vez de ejecutarla)', async () => {
+  // Reproduce el bug real encontrado con evidencia de audit.jsonl: el modelo
+  // devuelve JSON válido (toolCalls vacío) pero "speak" contiene la sintaxis
+  // nativa de tool-use de Anthropic como texto narrado — afirmando una acción
+  // que nunca se ejecutó (cero toolCalls = cero ejecución real).
+  const runtime = createRuntime({
+    dataDir: tempDataDir(),
+    model: {
+      provider: fakeModelProvider({
+        speak: 'Ejecutando la misión ahora. <function_calls> <invoke name="wa.send_message"> <parameter name="to">self</parameter> <parameter name="message">prueba</parameter> </invoke> </function_calls> funcionó correctamente.',
+        visual: '',
+        toolCalls: []
+      })
+    }
+  });
+
+  const task = await runtime.conversationRuntime.handleMessage({
+    text: 'manda un wsp de prueba',
+    channel: 'test'
+  });
+
+  assert.equal(task.status, 'completed');
+  assert.doesNotMatch(task.result.speak, /function_calls|invoke|<parameter/i);
+  assert.doesNotMatch(task.result.speak, /funcionó correctamente/i);
+});
+
+test('conversation runtime detecta y sanea exito fabricado en prosa normal (cero tools ejecutadas pero el modelo narra la accion como hecha)', async () => {
+  // Segundo patron del mismo bug de raiz, sin la sintaxis XML del primero:
+  // el usuario pide guardar el perfil de marca, el modelo devuelve toolCalls
+  // vacio (cero tools reales) y aun asi narra en prosa limpia que ya se
+  // guardo. Caso real: brand.save "confirmado" sin entrada en audit.jsonl.
+  const runtime = createRuntime({
+    dataDir: tempDataDir(),
+    model: {
+      provider: fakeModelProvider({
+        speak: 'Listo, ya guardé el perfil de marca con esos datos.',
+        visual: '',
+        toolCalls: []
+      })
+    }
+  });
+
+  const task = await runtime.conversationRuntime.handleMessage({
+    text: 'guarda el perfil de marca: voz cercana, audiencia jóvenes',
+    channel: 'test'
+  });
+
+  assert.equal(task.status, 'completed');
+  assert.doesNotMatch(task.result.speak, /ya guard[ée]/i);
+  assert.match(task.result.speak, /no llegué a ejecutar/i);
+});
+
+test('conversation runtime NO sanea respuestas conversacionales sin pedido de accion (falso positivo de claimsActionDone)', async () => {
+  // Control: si el usuario NO pidio una accion (isActionRequest=false), el
+  // guard no debe tocar la respuesta aunque mencione palabras como "guardado"
+  // en otro sentido (ej. charla sobre algo ya hecho antes).
+  const runtime = createRuntime({
+    dataDir: tempDataDir(),
+    model: {
+      provider: fakeModelProvider({
+        speak: 'Sí, ese documento ya quedó guardado la semana pasada, no necesitas hacer nada.',
+        visual: '',
+        toolCalls: []
+      })
+    }
+  });
+
+  const task = await runtime.conversationRuntime.handleMessage({
+    text: '¿ese documento ya está guardado de antes?',
+    channel: 'test'
+  });
+
+  assert.equal(task.status, 'completed');
+  assert.match(task.result.speak, /quedó guardado la semana pasada/i);
+});
+
 test('conversation runtime answers capability questions with concrete grouped output', async () => {
   const runtime = createRuntime({
     dataDir: tempDataDir(),

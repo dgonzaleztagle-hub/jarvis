@@ -14,6 +14,7 @@ const path = require('path');
 const { withRetry } = require('../utils/retry');
 const { google } = require('googleapis');
 const { writeJsonAtomic } = require('../core/atomic-json');
+const { dayKey } = require('../utils/time');
 
 const SHEET_ID_FILE = 'memory/external-sheet-id.json';
 const MASTER_TITLE = 'Jarvis — Memoria Externa';
@@ -179,7 +180,11 @@ function createSheetsMemoryTools({ authFactory, dataDir }) {
 
         const record = Object.assign({}, input.data);
         if (!record.id) record.id = generateId();
-        if (!record.fecha && tabDef.headers.includes('fecha')) record.fecha = new Date().toISOString().slice(0, 10);
+        // dayKey(), no toISOString().slice(0,10): la fecha guardada es para
+        // que un humano lea "qué día fue esto" — entre las 20:00 y 23:59 de
+        // Chile, el día UTC ya es "mañana" y un registro de hoy se guardaba
+        // con fecha de mañana. Mismo bug de fondo que el de agentes diarios.
+        if (!record.fecha && tabDef.headers.includes('fecha')) record.fecha = dayKey();
 
         const row = tabDef.headers.map((h) => (record[h] !== undefined ? String(record[h]) : ''));
         await appendRow(spreadsheetId, tabDef.name, row);

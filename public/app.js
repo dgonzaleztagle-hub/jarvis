@@ -12,7 +12,7 @@ import {
 import { addMessage, showTyping, hideTyping, buildDisplay, appendDeferredContent } from './modules/feed.js';
 import { onHudShowFile } from './modules/inbox-viewer.js';
 import { onHudShowPreview } from './modules/preview-panel.js';
-import { setupSpecialistIndicator } from './modules/specialist-indicator.js';
+import { setupSpecialistsPanel, openSpecialistsPanel } from './modules/specialists-panel.js';
 import { onHudOpenUrl } from './modules/open-url.js';
 import { renderTasks, renderEvents, loadTasks, announceTaskClosure, findPendingToolResult, confirmPendingTask } from './modules/tasks.js';
 import {
@@ -152,10 +152,19 @@ export async function submitChat(forcedText) {
     const usedAgentTools     = toolResults.some(r => /^agents\./.test(r.toolName || '') && r.status === 'completed');
     const opensPanel = opensEmailPanel || opensCalendarPanel || !!createdEventResult || !!threadResult || !!searchResult || usedAgentTools;
 
+    // Si este turno activó un especialista (Alex/Mara/Teo), su respuesta se
+    // habla con SU voz, no la de Jarvis — correlacionado por taskId con el
+    // evento specialist_active que ya llegó por SSE mientras el server
+    // procesaba (la respuesta HTTP solo resuelve al terminar el turno).
+    const { getVoiceProfileForTask } = await import('./modules/specialists-panel.js');
+    const specialistVoiceProfile = data.task?.id ? getVoiceProfileForTask(data.task.id) : null;
+
     const jarvisMsg = addMessage('jarvis', 'Jarvis', opensPanel ? (result.speak || buildDisplay(result)) : buildDisplay(result), {
       confirmTaskId: pending?.taskId,
       voiceResult:  result,
       speakText:    opensPanel ? (result.speak || '') : undefined,
+      voiceProfile: specialistVoiceProfile,
+      segments:     result.segments,
     });
     // Fase 2: el detalle estructurado se está generando aparte y llegará por SSE.
     // Registramos la burbuja para rellenarla cuando llegue el evento.
@@ -291,7 +300,7 @@ async function boot() {
   }).catch(() => {});
 
   const stream = new EventSource('/events/stream');
-  setupSpecialistIndicator(stream);
+  setupSpecialistsPanel(stream);
   stream.addEventListener('ready', () => { dom.eventsPill.textContent = 'EVT'; dom.eventsPill.className = 'pill ok'; });
   stream.onmessage = () => {};
   for (const t of ['task_started','task_progress','task_completed','task_failed','task_needs_confirmation','task_confirmed']) {
@@ -311,6 +320,28 @@ async function boot() {
       showCredentialsModal(payload);
     } catch (err) { console.error('[credentials] modal error', err); }
   });
+
+  // Pulso de "trabajando" en el panel fijo de agentes: se prende apenas
+  // arranca la corrida (no recién al terminar) y se apaga + refresca con
+  // cualquiera de los cierres posibles (completed/failed/needs_approval/
+  // needs_input) para que el resultado nuevo se vea de inmediato.
+  stream.addEventListener('agent_run_started', async (evt) => {
+    try {
+      const { payload } = JSON.parse(evt.data);
+      const { markAgentRunning } = await import('./modules/agents-panel.js');
+      markAgentRunning(payload.agentId, true);
+    } catch (_) {}
+  });
+  for (const t of ['agent_run_completed', 'agent_run_failed', 'agent_run_needs_approval', 'agent_run_needs_input']) {
+    stream.addEventListener(t, async (evt) => {
+      try {
+        const { payload } = JSON.parse(evt.data);
+        const { markAgentRunning, openAgentsPanel: refreshAgentsPanel } = await import('./modules/agents-panel.js');
+        markAgentRunning(payload.agentId, false);
+        refreshAgentsPanel().catch(() => {});
+      } catch (_) {}
+    });
+  }
 
   stream.addEventListener('conversation_history_compressed', (evt) => {
     try {
@@ -425,11 +456,13 @@ dom.startupBtn.addEventListener('click', () => {
     if (!state.pendingQuestion) setPendingQuestion({ type: 'music_offer' });
   });
 
-  // Si hay agentes vivos, mostrar su panel al arrancar — el usuario debe saber
-  // qué corre en su nombre sin tener que preguntarlo.
-  api('/agents').then((data) => {
-    if ((data.agents || []).length > 0) openAgentsPanel().catch(() => {});
-  }).catch(() => {});
+  // El panel de agentes vive siempre en la zona izquierda del HUD (su casa
+  // fija), haya o no agentes creados todavía — no solo cuando hay actividad.
+  openAgentsPanel().catch(() => {});
+  // Los especialistas built-in (Alex/Mara/Teo) viven en su propio panel fijo,
+  // distinto del de Agentes (esos son los cron jobs que crea el usuario) —
+  // antes solo había un chip flotante que aparecía 1-2s y se perdía.
+  openSpecialistsPanel().catch(() => {});
 
   // Corridas programadas de agentes: el HUD las anuncia por voz y las deja en
   // el feed. Polling liviano — el server drena su cola en cada consulta.

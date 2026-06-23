@@ -36,6 +36,7 @@
  *
  * Uso:  node scripts/qa-field-dentist.js
  *       node scripts/qa-field-dentist.js --report-only   (solo imprime que existe, no corre nada)
+ *       node scripts/qa-field-dentist.js --teardown       (borra memoria/grafo/resumen marcados con TAG)
  */
 
 const fs = require('fs');
@@ -46,6 +47,7 @@ const TAG = 'SONRISAQA';
 const CLINIC = 'Clinica Dental Sonrisa Plena';
 const DATA_DIR = path.join(__dirname, '..', 'local_data');
 const REPORT_ONLY = process.argv.includes('--report-only');
+const TEARDOWN = process.argv.includes('--teardown');
 
 const C = {
   reset: '\x1b[0m', dim: '\x1b[2m', bold: '\x1b[1m',
@@ -308,6 +310,72 @@ async function buildInventory() {
   return inv;
 }
 
+// ── Teardown: borra del local_data REAL lo que quedó marcado con TAG ─────────
+// No hay tool de borrado de memoria/grafo (memory.delete no existe) — esto
+// edita los JSON directo, igual que la limpieza manual que se hizo la vez que
+// esto faltó y el HUD recitó un agente fantasma ("Recordatorio Semanal
+// SONRISAQA") ya borrado, porque quedó fosilizado en memory/index.json y
+// graph.json sin que nada lo supiera invalidar. Conserva la entidad "Daniel"
+// (nunca se borra al usuario real), solo sus hechos contaminados con el tag.
+async function teardown() {
+  const memDir = path.join(DATA_DIR, 'memory');
+  const mentionsTag = (o) => {
+    const s = JSON.stringify(o).toLowerCase();
+    return s.includes(TAG.toLowerCase()) || s.includes('sonrisa plena');
+  };
+
+  const idxPath = path.join(memDir, 'index.json');
+  let removedMemory = 0;
+  if (fs.existsSync(idxPath)) {
+    const idx = JSON.parse(fs.readFileSync(idxPath, 'utf-8'));
+    const keep = [];
+    for (const r of idx.records || []) {
+      const f = path.join(memDir, `${r.id}.json`);
+      const contaminated = fs.existsSync(f) && fs.readFileSync(f, 'utf-8').toLowerCase().includes('sonrisa plena');
+      if (contaminated) { fs.unlinkSync(f); removedMemory += 1; } else { keep.push(r); }
+    }
+    idx.records = keep;
+    fs.writeFileSync(idxPath, JSON.stringify(idx, null, 2));
+  }
+
+  const gp = path.join(memDir, 'graph.json');
+  let graphCounts = null;
+  if (fs.existsSync(gp)) {
+    const g = JSON.parse(fs.readFileSync(gp, 'utf-8'));
+    const removedIds = new Set(
+      g.entities.filter((e) => e.name !== 'Daniel' && mentionsTag(e)).map((e) => e.id)
+    );
+    const before = { entities: g.entities.length, facts: g.facts.length, relationships: g.relationships.length, commitments: g.commitments.length };
+    g.entities = g.entities.filter((e) => !removedIds.has(e.id));
+    g.facts = g.facts.filter((f) => !removedIds.has(f.subjectId) && !mentionsTag(f));
+    g.relationships = g.relationships.filter((r) => !removedIds.has(r.fromId) && !removedIds.has(r.toId));
+    g.commitments = g.commitments.filter((c) => !mentionsTag(c));
+    fs.writeFileSync(gp, JSON.stringify(g, null, 2));
+    graphCounts = { before, after: { entities: g.entities.length, facts: g.facts.length, relationships: g.relationships.length, commitments: g.commitments.length } };
+  }
+
+  // Resumen rolling de conversación: si algún turno de esta corrida ya quedó
+  // incorporado al resumen persistido, se cuela en TODOS los turnos futuros
+  // del usuario real hasta el próximo resumen (es el caso que de verdad
+  // produjo la confusión visible en el HUD, más que memoria/grafo).
+  const statePath = path.join(DATA_DIR, 'logs', 'conversation-state.json');
+  let summaryTouched = false;
+  if (fs.existsSync(statePath)) {
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    if (state.summary && state.summary.toLowerCase().includes(TAG.toLowerCase())) {
+      state.summary = state.summary.split('\n').filter((line) => !line.toLowerCase().includes(TAG.toLowerCase())).join('\n');
+      fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
+      summaryTouched = true;
+    }
+  }
+
+  out(`${C.bold}=== Teardown (${TAG}) ===${C.reset}`);
+  out(`  memoria: ${removedMemory} registros borrados`);
+  if (graphCounts) out(`  grafo: ${JSON.stringify(graphCounts.before)} -> ${JSON.stringify(graphCounts.after)}`);
+  out(`  resumen rolling: ${summaryTouched ? 'limpiado' : 'sin mención, no se tocó'}`);
+  out(`${C.yellow}  Nota: agentes/calendar/tasks/docs/drive reales (si los hubiera) no se tocan acá — bórralos tú explícito si el inventario los lista.${C.reset}`);
+}
+
 async function main() {
   out(`${C.bold}=== Auditoria de campo: ${CLINIC} (Dr. Pizarro) — ${BASE} ===${C.reset}`);
   out(`${C.dim}marcador de trazabilidad: ${TAG} — SIN teardown automatico, queda todo para revision${C.reset}`);
@@ -315,6 +383,11 @@ async function main() {
   if (REPORT_ONLY) {
     const inv = await buildInventory();
     out(JSON.stringify(inv, null, 2));
+    return;
+  }
+
+  if (TEARDOWN) {
+    await teardown();
     return;
   }
 

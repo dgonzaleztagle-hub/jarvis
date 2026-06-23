@@ -1,3 +1,5 @@
+const { validateDefinition } = require('./agent-store');
+
 function summarizeAgent(agent) {
   return {
     id: agent.id,
@@ -44,7 +46,7 @@ function createAgentTools({ store, scheduler, budgetConfig, usageMeter }) {
     },
     {
       name: 'agents.create',
-      description: 'Crear un agente automático con una misión recurrente. Input: { name, goal (misión en lenguaje natural, será el mensaje que el agente ejecuta), schedule: { type: "daily"|"interval"|"manual", at: "HH:MM" (daily), minutes: N (interval) }, maxRunsPerDay (opcional, default 4), maxCostPerDayUsd (opcional, tope de gasto diario en USD; si una corrida lo cruza, el agente deja de correr ese día aunque le queden corridas) }. Requiere confirmación del usuario antes de crear. Tras crearlo, el sistema corre la misión UNA VEZ de inmediato para validar que de verdad funciona — el resultado vuelve en "validation". Si "validation" muestra que falló por un problema de la propia misión (ej: URL/dominio que no existe, instrucción ambigua que no usó ninguna herramienta), corrige el goal con agents.update_goal y vuelve a probar con agents.run_now antes de responder al usuario. Si tras corregir una vez sigue sin funcionar, dilo explícitamente y pide al usuario lo que falte — no reportes "creado" sin contar cómo salió la prueba.',
+      description: 'Crear un agente automático con una misión recurrente. Input: { name, goal (misión en lenguaje natural, será el mensaje que el agente ejecuta), schedule: { type: "daily"|"interval"|"weekly"|"manual", at: "HH:MM" (daily/weekly), minutes: N (interval), daysOfWeek: [0-6] (weekly, 0=domingo..6=sábado) }, maxRunsPerDay (opcional, default 4), maxCostPerDayUsd (opcional, tope de gasto diario en USD; si una corrida lo cruza, el agente deja de correr ese día aunque le queden corridas) }. Traduce TÚ la agenda en lenguaje natural a esta estructura exacta UNA vez al crear (ej: "cada lunes a las 9" → { type: "weekly", daysOfWeek: [1], at: "09:00" }; "lunes y jueves" → daysOfWeek: [1,4]) — el scheduler luego solo compara números, no interpreta texto. Requiere confirmación del usuario antes de crear. Tras crearlo, el sistema corre la misión UNA VEZ de inmediato para validar que de verdad funciona — el resultado vuelve en "validation". Si "validation" muestra que falló por un problema de la propia misión (ej: URL/dominio que no existe, instrucción ambigua que no usó ninguna herramienta), corrige el goal con agents.update_goal y vuelve a probar con agents.run_now antes de responder al usuario. Si tras corregir una vez sigue sin funcionar, dilo explícitamente y pide al usuario lo que falte — no reportes "creado" sin contar cómo salió la prueba.',
       risk: 'high',
       permissions: ['agents:create'],
       execute: async (input) => {
@@ -84,6 +86,36 @@ function createAgentTools({ store, scheduler, budgetConfig, usageMeter }) {
         const goal = String(input.goal || '').trim();
         if (!goal) throw new Error('AGENT_GOAL_REQUIRED');
         return summarizeAgent(store.update(agent.id, { goal }));
+      }
+    },
+    {
+      name: 'agents.update',
+      description: 'Editar nombre, agenda (schedule) o presupuesto de un agente existente, sin borrarlo y crear uno nuevo. Input: { agent (id o nombre), name? (opcional), schedule? (opcional, misma forma que en agents.create: daily/interval/weekly/manual), maxRunsPerDay? (opcional), maxCostPerDayUsd? (opcional, null para quitar el tope) }. Para corregir la MISIÓN (goal) usa agents.update_goal, no esta tool — solo toca agenda/nombre/presupuesto.',
+      risk: 'medium',
+      permissions: ['agents:manage'],
+      execute: async (input) => {
+        const agent = store.get(String(input.agent || ''));
+        if (!agent) throw new Error(`AGENT_NOT_FOUND: ${input.agent}`);
+
+        const patch = {};
+        if (input.name != null) patch.name = String(input.name).trim();
+        if (input.schedule != null) patch.schedule = input.schedule;
+        if (input.maxRunsPerDay != null) patch.maxRunsPerDay = Math.max(1, Math.min(Number(input.maxRunsPerDay) || 4, 24));
+        if (input.maxCostPerDayUsd !== undefined) {
+          patch.maxCostPerDayUsd = input.maxCostPerDayUsd != null ? Math.max(0, Number(input.maxCostPerDayUsd)) : null;
+        }
+
+        // Valida el resultado COMPLETO (no solo el patch) — un schedule a medio
+        // editar (ej: cambiar a "weekly" sin mandar daysOfWeek) debe rechazarse
+        // acá, no descubrirse silenciosamente roto en el próximo tick.
+        const errors = validateDefinition({ ...agent, ...patch });
+        if (errors.length > 0) {
+          const error = new Error(`AGENT_DEFINITION_INVALID: ${errors.join('; ')}`);
+          error.validation = errors;
+          throw error;
+        }
+
+        return summarizeAgent(store.update(agent.id, patch));
       }
     },
     {

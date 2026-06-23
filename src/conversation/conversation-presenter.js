@@ -2,7 +2,7 @@
 // dice. Sin estado ni `this`. Incluye el contrato de voz (enforced en código,
 // no solo en prompt). Extraído de conversation-runtime.js.
 
-const { endsComplete, isInventoryIntent, hasScannableStructure, looksPromissory } = require('./conversation-intents');
+const { endsComplete, isInventoryIntent, hasScannableStructure, looksPromissory, isActionRequest, claimsActionDone } = require('./conversation-intents');
 
 function redactValue(key, value) {
   if (/token|secret|api.?key|authorization|password|credential/i.test(key)) return '[REDACTED]';
@@ -316,6 +316,58 @@ function responseSeemsIncomplete({ userText = '', response = {}, toolResults = [
   return false;
 }
 
+// El modelo (Haiku, vía Anthropic) a veces "narra" una llamada a herramienta
+// imitando su propio formato nativo de tool-use (<function_calls><invoke...>)
+// como TEXTO dentro de "speak", en vez de llenar el array "toolCalls" real que
+// el runtime ejecuta. Resultado: toolCalls queda vacío (cero ejecución real)
+// pero el texto suena a que la acción se hizo — una afirmación de éxito
+// fabricada. Detectado con evidencia real: agente que decía "envió el mensaje
+// por WhatsApp" con cero entradas de wa.send_message en el audit trail.
+const TOOL_CALL_LEAK_RE = /<\s*\/?\s*(function_calls|invoke|antml:invoke|parameter)\b/i;
+
+function containsToolCallLeak(text = '') {
+  return TOOL_CALL_LEAK_RE.test(String(text || ''));
+}
+
+// No hay forma de saber si la acción narrada ocurrió de verdad — toolCalls
+// estaba vacío, así que no ocurrió. Reemplaza por una frase honesta en vez de
+// dejar pasar la afirmación fabricada al usuario o al historial.
+function stripToolCallLeak(response = {}) {
+  const speak = String(response.speak || '');
+  const visual = String(response.visual || '');
+  if (!containsToolCallLeak(speak) && !containsToolCallLeak(visual)) return response;
+  return {
+    ...response,
+    speak: 'No alcancé a completar esa acción correctamente — intentémoslo de nuevo.',
+    visual: '',
+    toolCalls: [],
+    _toolCallLeakDetected: true
+  };
+}
+
+// Segundo patrón de "éxito fabricado", sin la sintaxis XML del primero: el
+// usuario pidió una acción (verbo imperativo: manda, guarda, crea...), CERO
+// tools corrieron en todo el turno, y el modelo de todas formas narra en
+// prosa normal que la acción se hizo ("listo, lo envié", "quedó guardado").
+// Encontrado real: brand.save/preview.render_html "confirmados" sin ninguna
+// entrada en audit.jsonl. A diferencia de stripToolCallLeak (patrón fijo),
+// acá el gatillo es 100% estructural — toolResults.length === 0 es un hecho
+// verificable, no requiere interpretar qué dice el texto — el vocabulario de
+// isActionRequest/claimsActionDone es finito y acotado, no NLU abierta.
+function stripFabricatedActionClaim(response = {}, { userText = '', toolResultsCount = 0 } = {}) {
+  if (toolResultsCount > 0) return response;
+  if (!isActionRequest(userText)) return response;
+  const speak = String(response.speak || '');
+  const visual = String(response.visual || '');
+  if (!claimsActionDone(speak) && !claimsActionDone(visual)) return response;
+  return {
+    ...response,
+    speak: 'Antes de seguir: no llegué a ejecutar esa acción todavía. ¿Quieres que la intente ahora?',
+    visual: '',
+    _fabricatedActionClaimDetected: true
+  };
+}
+
 function summarizeToolResults(toolResults = []) {
   return toolResults.map((item) => ({
     toolName: item.toolName,
@@ -337,5 +389,8 @@ module.exports = {
   enforceSpeakContract,
   responseSeemsIncomplete,
   summarizeToolResults,
+  containsToolCallLeak,
+  stripToolCallLeak,
+  stripFabricatedActionClaim,
   SPEAK_MAX_CHARS
 };

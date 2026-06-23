@@ -30,8 +30,46 @@ const VOICE_PROFILES = {
     rate: '-2%',
     volume: '+0%',
     pitch: '+0Hz'
+  },
+  // Voces de los especialistas (Alex/Mara/Teo) — distintas entre sí y de la
+  // voz default de Jarvis, para que "pásame a Mara" se sienta un agente
+  // distinto hablando, no Jarvis leyendo el mismo texto con otro acento.
+  alex_voice: {
+    id: 'alex_voice',
+    label: 'Alex (Diseño)',
+    description: 'Voz del especialista de Diseño.',
+    voice: 'es-AR-TomasNeural',
+    rate: '+2%',
+    volume: '+0%',
+    pitch: '+0Hz'
+  },
+  mara_voice: {
+    id: 'mara_voice',
+    label: 'Mara (Marketing)',
+    description: 'Voz de la especialista de Marketing.',
+    voice: 'es-MX-DaliaNeural',
+    rate: '+4%',
+    volume: '+2%',
+    pitch: '+2Hz'
+  },
+  teo_voice: {
+    id: 'teo_voice',
+    label: 'Teo (SEO/AEO)',
+    description: 'Voz del especialista de SEO/AEO/GEO.',
+    voice: 'es-CO-GonzaloNeural',
+    rate: '-4%',
+    volume: '+0%',
+    pitch: '-2Hz'
   }
 };
+
+// La afinación guardada (voice.json) es la personalización de Daniel para SU
+// perfil elegido — solo debe aplicarse cuando el perfil pedido coincide con
+// el que guardó (o no se pidió ninguno, y se usa el guardado como default).
+// Pedir explícitamente OTRO perfil (un especialista) no debe heredarla.
+function shouldApplySavedTuning(requestedProfile, saved = {}) {
+  return (requestedProfile || saved.profile) === saved.profile;
+}
 
 function resolveVoiceProfile(input = {}, defaults = {}) {
   const requestedProfile = input.profile || input.voiceProfile || defaults.profile || 'dark_lord';
@@ -55,14 +93,22 @@ function createEdgeTTSProvider(options = {}) {
       fs.mkdirSync(outputDir, { recursive: true });
       // Prioridad: input explícito > config guardada por el usuario (panel
       // del HUD, compartida entre canales) > defaults de opciones > preset.
+      //
+      // OJO: la config guardada es la afinación de Daniel para SU perfil
+      // elegido (voice.json guarda {profile, rate, volume, pitch} juntos, como
+      // un combo). Si se pide explícitamente OTRO perfil (ej: un especialista
+      // como Mara hablando con su propia voz), esa afinación NO debe heredarse
+      // — encontrado en vivo: mara_voice salía con el mismo rate/pitch de
+      // dark_lord, perdiendo el carácter propio que el preset le daba.
       const saved = options.dataDir ? loadVoiceConfig(options.dataDir) : {};
+      const tuningApplies = shouldApplySavedTuning(voiceProfile, saved);
       const resolved = resolveVoiceProfile({
         profile: voiceProfile,
         voice,
         rate,
         volume,
         pitch
-      }, { ...options, ...saved });
+      }, { ...options, ...(tuningApplies ? saved : {}) });
       const comm = new Communicate(String(text), {
         voice: resolved.voice,
         rate: resolved.rate,
@@ -100,5 +146,6 @@ function createEdgeTTSProvider(options = {}) {
 module.exports = {
   createEdgeTTSProvider,
   VOICE_PROFILES,
-  resolveVoiceProfile
+  resolveVoiceProfile,
+  shouldApplySavedTuning
 };

@@ -1,7 +1,7 @@
 // Día y hora en la zona del producto (Chile por defecto), no UTC ni la zona de
 // la máquina: con UTC el presupuesto diario se reseteaba a las 20:00/21:00 de
 // Chile y un agente diario nocturno podía correr dos veces o saltarse.
-const { dayKey, hhmm } = require('../utils/time');
+const { dayKey, hhmm, weekday } = require('../utils/time');
 
 function todayKey(now) {
   return dayKey(now);
@@ -12,13 +12,14 @@ function localHHMM(now) {
 }
 
 class AgentScheduler {
-  constructor({ store, conversationRuntime, eventBus, usageMeter, budgetConfig, auditTrail, intervalMs = 60_000 }) {
+  constructor({ store, conversationRuntime, eventBus, usageMeter, budgetConfig, auditTrail, toolRegistry, intervalMs = 60_000 }) {
     this.store = store;
     this.conversationRuntime = conversationRuntime;
     this.eventBus = eventBus;
     this.usageMeter = usageMeter || null;
     this.budgetConfig = budgetConfig || null;
     this.auditTrail = auditTrail || null;
+    this.toolRegistry = toolRegistry || null;
     this.intervalMs = intervalMs;
     this.timer = null;
     this.running = new Set();
@@ -78,13 +79,33 @@ class AgentScheduler {
     }
 
     if (schedule.type === 'daily') {
-      const alreadyToday = agent.lastRunAt && agent.lastRunAt.slice(0, 10) === todayKey(now);
+      // OJO: lastRunAt es ISO en UTC (toISOString) — compararlo con
+      // .slice(0,10) contra todayKey(now) (día en Chile) desincroniza entre
+      // las 20:00 y 23:59 de Chile, cuando el día UTC ya es "mañana" pero en
+      // Chile sigue siendo "hoy": el agente cree que NO ha corrido hoy y se
+      // re-dispara cada tick hasta el tope de maxRunsPerDay. Bug real
+      // encontrado en vivo: "Test Validacion Self QA" disparándose solo cada
+      // minuto. Fix: convertir lastRunAt a día-Chile antes de comparar.
+      const alreadyToday = agent.lastRunAt && todayKey(new Date(agent.lastRunAt)) === todayKey(now);
       return !alreadyToday && localHHMM(now) >= schedule.at;
     }
     if (schedule.type === 'interval') {
       if (!agent.lastRunAt) return true;
       const elapsedMin = (now.getTime() - new Date(agent.lastRunAt).getTime()) / 60_000;
       return elapsedMin >= Number(schedule.minutes);
+    }
+    if (schedule.type === 'weekly') {
+      const days = Array.isArray(schedule.daysOfWeek) ? schedule.daysOfWeek : [];
+      if (!days.includes(weekday(now))) return false;
+      // OJO: lastRunAt es ISO en UTC (toISOString) — compararlo con
+      // .slice(0,10) contra todayKey(now) (día en Chile) desincroniza entre
+      // las 20:00 y 23:59 de Chile, cuando el día UTC ya es "mañana" pero en
+      // Chile sigue siendo "hoy": el agente cree que NO ha corrido hoy y se
+      // re-dispara cada tick hasta el tope de maxRunsPerDay. Bug real
+      // encontrado en vivo: "Test Validacion Self QA" disparándose solo cada
+      // minuto. Fix: convertir lastRunAt a día-Chile antes de comparar.
+      const alreadyToday = agent.lastRunAt && todayKey(new Date(agent.lastRunAt)) === todayKey(now);
+      return !alreadyToday && localHHMM(now) >= schedule.at;
     }
     return false;
   }
@@ -97,7 +118,7 @@ class AgentScheduler {
     }
   }
 
-  async runAgent(agentOrId, { trigger = 'manual' } = {}) {
+  async runAgent(agentOrId, { trigger = 'manual', answerToLastQuestion = null } = {}) {
     const agent = typeof agentOrId === 'string' ? this.store.get(agentOrId) : agentOrId;
     if (!agent) throw new Error(`AGENT_NOT_FOUND: ${agentOrId}`);
     if (this.running.has(agent.id)) throw new Error(`AGENT_ALREADY_RUNNING: ${agent.name}`);
@@ -108,6 +129,9 @@ class AgentScheduler {
     }
 
     this.running.add(agent.id);
+    // El HUD escucha esto para prender el pulso de "trabajando" en el momento
+    // real en que arranca — no cuando termina, que es lo único que ya emitía.
+    this.eventBus?.emit('agent_run_started', { agentId: agent.id, name: agent.name, trigger });
     const now = new Date();
     const sameDay = agent.runsTodayDate === todayKey(now);
     this.store.update(agent.id, {
@@ -129,8 +153,16 @@ class AgentScheduler {
       // ("revisar todos los días...") se leería como orden de PROGRAMAR un
       // agente nuevo — recursión. Acá se ejecuta UNA pasada, ahora.
       const runStartedIso = now.toISOString();
+      // Si esta corrida responde una pregunta que el agente dejó pendiente
+      // (datos faltantes, ej: "¿me das tu teléfono?"), la respuesta se inyecta
+      // como contexto de ESTA corrida puntual — no se vuelve parte permanente
+      // del goal, es información de una sola vez (igual que contestarle a un
+      // humano que preguntó algo).
+      const answerContext = answerToLastQuestion
+        ? ` [El usuario respondió a tu pregunta anterior ("${agent.lastResult?.speak || ''}"): "${answerToLastQuestion}". Úsalo para completar la misión ahora.]`
+        : '';
       const task = await this.conversationRuntime.handleMessage({
-        text: `[Corrida automática del agente "${agent.name}". Esta es UNA ejecución de su misión: hazla AHORA con las herramientas disponibles y reporta el resultado. La recurrencia ya está programada — no crees, modifiques ni programes agentes. Si decides notificar al dueño del sistema (por WhatsApp/Telegram/etc), dirígelo a "self"/"yo" — NUNCA a su nombre propio, no es un contacto suyo guardado.] Misión: ${agent.goal}`,
+        text: `[Corrida automática del agente "${agent.name}". Esta es UNA ejecución de su misión: hazla AHORA con las herramientas disponibles y reporta el resultado. La recurrencia ya está programada — no crees, modifiques ni programes agentes. Si decides notificar al dueño del sistema (por WhatsApp/Telegram/etc), dirígelo a "self"/"yo" — NUNCA a su nombre propio, no es un contacto suyo guardado.]${answerContext} Misión: ${agent.goal}`,
         channel: 'agent',
         // Namespace de memoria: lo que esta corrida aprenda queda taggeado con
         // este agentId, no contamina la memoria principal ni la de otros
@@ -144,20 +176,42 @@ class AgentScheduler {
       // corrida" + el speak de esa confirmación pendiente, armando un mensaje
       // sin sentido (lo vimos real: agente de WhatsApp -> mensaje garabateado).
       const pendingConfirm = this.auditTrail?.query({ outcome: 'confirmation_required', since: runStartedIso, limit: 5 }) || [];
+      const speakText = task.result?.speak || '';
 
+      // Mismo problema de fondo que confirmation_required, pero sin tool de
+      // por medio: el modelo le faltó un dato (ej: un teléfono no guardado) y
+      // terminó el turno con una pregunta — en una corrida desatendida nadie
+      // va a contestarla. Detectado real: agente que quedó preguntando "¿me
+      // das tu teléfono?" reportado como si hubiera "terminado" normal. Señal
+      // 100% estructural (termina en "?"), no requiere interpretar el texto.
+      const danglingQuestion = pendingConfirm.length === 0 && task.status === 'completed' && /\?\s*$/.test(speakText.trim());
+
+      // Si la misión ya entregó algo al usuario por un canal real (ej: le
+      // mandó el WhatsApp que era justo su tarea), el aviso de "tu agente
+      // corrió" por Telegram es ruido duplicado — el WhatsApp YA es el aviso.
+      // Señal estructural: ¿alguna tool outbound (tool.outbound=true en el
+      // registro) corrió "completed" en este turno? No depende de leer el
+      // contenido de "speak", solo de qué tools de verdad se ejecutaron.
+      const toolResults = Array.isArray(task.result?.toolResults) ? task.result.toolResults : [];
+      const deliveredViaOutbound = this.toolRegistry
+        ? toolResults.some((r) => r.status === 'completed' && this.toolRegistry.get(r.toolName)?.outbound)
+        : false;
+
+      const status = pendingConfirm.length > 0 ? 'needs_approval' : (danglingQuestion ? 'needs_input' : task.status);
       const result = {
-        status: pendingConfirm.length > 0 ? 'needs_approval' : task.status,
-        speak: task.result?.speak || '',
+        status,
+        speak: speakText,
         pendingTools: pendingConfirm.length > 0 ? [...new Set(pendingConfirm.map((e) => e.tool))] : undefined,
+        deliveredViaOutbound,
         at: now.toISOString(),
         trigger
       };
       this.recordRunCost(agent, costBefore, now);
       this.store.update(agent.id, { lastResult: result });
-      this.eventBus?.emit(
-        pendingConfirm.length > 0 ? 'agent_run_needs_approval' : 'agent_run_completed',
-        { agentId: agent.id, name: agent.name, ...result }
-      );
+      const eventType = pendingConfirm.length > 0
+        ? 'agent_run_needs_approval'
+        : (danglingQuestion ? 'agent_run_needs_input' : 'agent_run_completed');
+      this.eventBus?.emit(eventType, { agentId: agent.id, name: agent.name, ...result });
       return result;
     } catch (error) {
       this.recordRunCost(agent, costBefore, now);

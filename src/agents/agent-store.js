@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { writeJsonAtomic } = require('../core/atomic-json');
 
-const SCHEDULE_TYPES = ['daily', 'interval', 'manual'];
+const SCHEDULE_TYPES = ['daily', 'interval', 'weekly', 'manual'];
 
 function validateDefinition(def = {}) {
   const errors = [];
@@ -12,11 +12,20 @@ function validateDefinition(def = {}) {
   if (!SCHEDULE_TYPES.includes(schedule.type)) {
     errors.push(`schedule.type debe ser uno de: ${SCHEDULE_TYPES.join(', ')}`);
   }
-  if (schedule.type === 'daily' && !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(schedule.at || ''))) {
+  if ((schedule.type === 'daily' || schedule.type === 'weekly') && !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(schedule.at || ''))) {
     errors.push('schedule.at debe ser hora "HH:MM" (24h)');
   }
   if (schedule.type === 'interval' && !(Number(schedule.minutes) >= 5)) {
     errors.push('schedule.minutes debe ser un número >= 5');
+  }
+  // weekly: días de la semana en formato numérico (0=domingo..6=sábado), igual
+  // a Date#getDay() — el LLM traduce "cada lunes"/"lunes y jueves" a esto UNA
+  // vez al crear el agente; el scheduler solo compara números, sin NLU en el loop.
+  if (schedule.type === 'weekly') {
+    const days = schedule.daysOfWeek;
+    const valid = Array.isArray(days) && days.length > 0
+      && days.every((d) => Number.isInteger(d) && d >= 0 && d <= 6);
+    if (!valid) errors.push('schedule.daysOfWeek debe ser un array de números 0-6 (0=domingo) con al menos un día');
   }
   return errors;
 }

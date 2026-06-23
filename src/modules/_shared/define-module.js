@@ -5,14 +5,27 @@
 //
 // No es un framework pesado: solo valida que el contrato no se desvíe
 // (campos requeridos, tools es array) y devuelve el objeto tal cual.
-function defineModule({ name, displayName, specialistName, expertise, isRelevant, tools }) {
+function defineModule({ name, displayName, specialistName, expertise, tools, voiceProfile, tone }) {
   if (!name) throw new Error('defineModule requiere "name"');
   if (!displayName) throw new Error('defineModule requiere "displayName"');
   if (!specialistName) throw new Error('defineModule requiere "specialistName"');
-  if (typeof isRelevant !== 'function') throw new Error('defineModule requiere "isRelevant" como función');
   if (!Array.isArray(tools)) throw new Error('defineModule requiere "tools" como array');
 
-  return { name, displayName, specialistName, expertise: expertise || '', isRelevant, tools };
+  // Perfil de voz del especialista (uno de VOICE_PROFILES en edge-tts-provider.js).
+  // Opcional: sin esto el turno habla con la voz default de Jarvis — así un
+  // módulo nuevo no rompe nada si todavía no le asignaron una voz propia.
+  //
+  // tone: cómo HABLA el especialista (registro/personalidad), distinto de
+  // "expertise" (qué sabe/qué tools usa). Jarvis base es seco/estructurado a
+  // propósito (Vader); los especialistas deben sonar fluidos, como personas
+  // normales con personalidad propia — esto es lo que lo logra, inyectado
+  // como override de registro cuando el modelo declara este especialista
+  // activo (ver buildVoiceSwitchBlock en conversation-runtime.js).
+  //
+  // No hay "isRelevant": qué especialista aplica cada turno lo decide el
+  // propio modelo en su JSON de respuesta (campo "specialist"), no un regex de
+  // palabras clave por módulo — ver buildModuleRoster en conversation-prompts.js.
+  return { name, displayName, specialistName, expertise: expertise || '', tools, voiceProfile: voiceProfile || null, tone: tone || '' };
 }
 
 module.exports = { defineModule };
